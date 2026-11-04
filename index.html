@@ -128,7 +128,7 @@
 
         // --- APP STATE ---
         let currentUser = JSON.parse(localStorage.getItem('novelverse_current_user') || 'null');
-        let currentView = localStorage.getItem('novelverse_current_view') || (currentUser ? 'dashboard' : 'login'); 
+        let currentView = localStorage.getItem('novelverse_current_view') || (currentUser ? 'reader_home' : 'login'); 
         let activeRole = localStorage.getItem('novelverse_active_role') || 'reader';
         let selectedNovelId = localStorage.getItem('novelverse_selected_novel') || null;
         let selectedChapterId = localStorage.getItem('novelverse_selected_chapter') || null;
