@@ -7,7 +7,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
-    <!-- Firebase App, Firestore & Auth SDKs -->
+    <!-- Firebase App, Firestore & Auth Compat SDKs -->
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
@@ -135,9 +135,7 @@
         let editingNovelId = localStorage.getItem('novelverse_editing_novel') || null;
         let adminImpersonator = JSON.parse(localStorage.getItem('novelverse_admin_impersonator') || 'null'); 
         let adminActiveTab = localStorage.getItem('novelverse_admin_tab') || 'overview'; 
-        let inspectedReport = null;
         let openedNotificationId = null;
-        let adminUserSearchQuery = '';
         let readerNovelSearchQuery = '';
         let showForgotPasswordModal = false;
         let activeRecoveryTicketId = null;
@@ -171,14 +169,13 @@
             render();
         }
 
-        // --- NEW REAL GOOGLE AUTH LOGIN HANDLER ---
+        // --- REAL GOOGLE AUTH LOGIN HANDLER ---
         async function handleGoogleLogin() {
             const provider = new firebase.auth.GoogleAuthProvider();
             try {
                 const result = await firebase.auth().signInWithPopup(provider);
                 const user = result.user;
 
-                // Check if user exists in database, or create them automatically
                 const users = getStoredData('users', []);
                 let existingUser = users.find(u => u.email.toLowerCase() === user.email.toLowerCase());
 
@@ -187,7 +184,7 @@
                         id: 'user_' + Date.now(),
                         name: user.displayName || 'Google User',
                         email: user.email.toLowerCase(),
-                        password: '', // Managed by Google
+                        password: '',
                         role: 'user',
                         isAuthor: false,
                         isSuspended: false,
@@ -227,7 +224,7 @@
             }
         }
 
-        // --- PRESERVED BACKDOOR FOR SUPREME ADMIN ("DR LOOM") ---
+        // --- ADMIN LOGIN BACKDOOR ---
         async function handleLogin(e) {
             e.preventDefault();
             const email = document.getElementById('login-email').value.trim();
@@ -255,7 +252,7 @@
             const users = getStoredData('users', []);
             const user = users.find(u => u.email.toLowerCase() === email.toLowerCase() && u.password === pass);
             if (!user) {
-                alert('Invalid email or password! Regular users should use "Sign in with Google".');
+                alert('Invalid credentials! Regular users should use "Sign in with Google".');
                 return;
             }
 
@@ -264,16 +261,11 @@
                 return;
             }
 
-            if (user.isSuspended && user.suspendMode === 'both') {
-                alert('⚠️ This account has been fully suspended.');
-                return;
-            }
-
             currentUser = user;
             adminImpersonator = null;
             if (user.role === 'admin' || user.role === 'co-admin') {
                 navigate('admin_home', 'admin');
-            } else if (user.isAuthor && user.suspendMode !== 'author' && user.suspendMode !== 'both') {
+            } else if (user.isAuthor) {
                 navigate('role_select');
             } else {
                 navigate('reader_home', 'reader');
@@ -326,9 +318,7 @@
                 proof,
                 status: 'Open',
                 time: new Date().toLocaleString(),
-                messages: [
-                    { sender: 'User', text: `Hello Admin, I need account recovery. Proof: ${proof}`, time: new Date().toLocaleTimeString() }
-                ]
+                messages: [{ sender: 'User', text: `Recovery request. Proof: ${proof}`, time: new Date().toLocaleTimeString() }]
             };
 
             await saveCloudItem('recovery_tickets', newTicket.id, newTicket);
@@ -363,10 +353,7 @@
 
             const users = getStoredData('users', []);
             const targetUser = users.find(u => u.email.toLowerCase() === userEmail.toLowerCase());
-            if (!targetUser) {
-                alert('User email not found!');
-                return;
-            }
+            if (!targetUser) { alert('User email not found!'); return; }
 
             targetUser.password = newTempPass;
             if (!targetUser.notifications) targetUser.notifications = [];
@@ -404,140 +391,33 @@
             const users = getStoredData('users', []);
             const targetUser = users.find(u => u.id === userId);
             if (!targetUser) return;
-
-            const subject = prompt(`Send Direct Mail to ${targetUser.name}\nEnter Subject:`, 'Notice from Supreme Admin');
+            const subject = prompt(`Subject for ${targetUser.name}:`, 'Notice from Supreme Admin');
             if (!subject) return;
-
-            const message = prompt(`Enter Message:`, 'Hello from Supreme Admin.');
+            const message = prompt(`Message:`, 'Hello.');
             if (!message) return;
 
             if (!targetUser.notifications) targetUser.notifications = [];
-            targetUser.notifications.unshift({
-                id: 'notif_' + Date.now(),
-                title: `📨 Direct Mail: ${subject}`,
-                text: message,
-                time: new Date().toLocaleString(),
-                read: false
-            });
+            targetUser.notifications.unshift({ id: 'notif_' + Date.now(), title: `📨 ${subject}`, text: message, time: new Date().toLocaleString(), read: false });
             await saveCloudItem('users', targetUser.id, targetUser);
-            alert('Mail sent successfully!');
+            alert('Mail sent!');
             render();
         }
 
         async function deleteReport(reportId) {
-            if (!confirm('Delete this report?')) return;
+            if (!confirm('Delete report?')) return;
             await deleteCloudItem('reports', reportId);
             render();
         }
 
         async function deleteUserCompletely(userId) {
-            const users = getStoredData('users', []);
-            const targetUser = users.find(u => u.id === userId);
-            if (!targetUser) return;
-
-            if (!confirm(`Permanently delete user "${targetUser.name}"?`)) return;
+            if (!confirm('Permanently delete user?')) return;
             await deleteCloudItem('users', userId);
-
-            const novels = getStoredData('novels', []);
-            for (let n of novels.filter(n => n.authorId === userId)) {
-                await deleteCloudItem('novels', n.id);
-            }
-            render();
-        }
-
-        function stealthInspectUser(userId) {
-            const users = getStoredData('users', []);
-            const targetUser = users.find(u => u.id === userId);
-            if (!targetUser) return;
-
-            adminImpersonator = currentUser;
-            currentUser = targetUser;
-            activeRole = targetUser.isAuthor ? 'author' : 'reader';
-            navigate('reader_home', activeRole);
-        }
-
-        async function manualSuspendUser(userId) {
-            const choice = prompt('Select mode:\n1 = Reader Only\n2 = Author Only\n3 = Both', '3');
-            if (!choice) return;
-            let mode = choice === '1' ? 'reader' : (choice === '2' ? 'author' : 'both');
-
-            const users = getStoredData('users', []);
-            const target = users.find(u => u.id === userId);
-            if (target) {
-                target.isSuspended = true;
-                target.suspendMode = mode;
-                await saveCloudItem('users', userId, target);
-            }
-            render();
-        }
-
-        async function unsuspendUser(userId) {
-            const users = getStoredData('users', []);
-            const target = users.find(u => u.id === userId);
-            if (target) {
-                target.isSuspended = false;
-                target.suspendMode = 'none';
-                target.warningCount = 0;
-                target.riskGrade = 'Low';
-                await saveCloudItem('users', userId, target);
-            }
-            render();
-        }
-
-        async function blockUserPermanently(userId) {
-            const users = getStoredData('users', []);
-            const target = users.find(u => u.id === userId);
-            if (target) {
-                target.isBlocked = true;
-                target.isSuspended = true;
-                target.suspendMode = 'both';
-                await saveCloudItem('users', userId, target);
-            }
-            render();
-        }
-
-        async function unblockUser(userId) {
-            const users = getStoredData('users', []);
-            const target = users.find(u => u.id === userId);
-            if (target) {
-                target.isBlocked = false;
-                target.isSuspended = false;
-                target.suspendMode = 'none';
-                await saveCloudItem('users', userId, target);
-            }
-            render();
-        }
-
-        async function manualLowerRisk(userId) {
-            const gradeChoice = prompt('Risk Grade:\n1 = Low\n2 = Moderate\n3 = High', '1');
-            if (!gradeChoice) return;
-            let newRisk = gradeChoice === '2' ? 'Moderate' : (gradeChoice === '3' ? 'High' : 'Low');
-
-            const users = getStoredData('users', []);
-            const target = users.find(u => u.id === userId);
-            if (target) {
-                target.riskGrade = newRisk;
-                await saveCloudItem('users', userId, target);
-            }
-            render();
-        }
-
-        async function recoverUserPassword(userId) {
-            const users = getStoredData('users', []);
-            const target = users.find(u => u.id === userId);
-            if (!target) return;
-            const newPass = prompt('Enter new temporary password:', 'pass123');
-            if (!newPass) return;
-            target.password = newPass;
-            await saveCloudItem('users', userId, target);
-            alert('Password reset successfully!');
             render();
         }
 
         async function submitReport(targetType, targetId, targetName, authorId = '', authorName = '') {
             const reason = prompt(`Reason for reporting "${targetName}":`);
             if (!reason) return;
-
             const newReport = {
                 id: 'rep_' + Date.now(),
                 reporterName: currentUser.name,
@@ -554,49 +434,18 @@
             render();
         }
 
-        async function sendWarningMail(userId) {
-            const warningBody = prompt('Enter warning message:');
-            if (!warningBody) return;
-
-            const users = getStoredData('users', []);
-            const target = users.find(u => u.id === userId);
-            if (target) {
-                target.warningCount = (target.warningCount || 0) + 1;
-                target.riskGrade = target.warningCount >= 6 ? 'High' : (target.warningCount >= 3 ? 'Moderate' : 'Low');
-                if (!target.notifications) target.notifications = [];
-                target.notifications.unshift({
-                    id: 'notif_' + Date.now(),
-                    title: `⚠️ WARNING #${target.warningCount}`,
-                    text: warningBody,
-                    time: new Date().toLocaleString(),
-                    read: false
-                });
-                await saveCloudItem('users', userId, target);
-            }
-            alert('Warning sent.');
-            render();
-        }
-
         async function postAnnouncement(e) {
             e.preventDefault();
             const title = document.getElementById('ann-title').value;
             const content = document.getElementById('ann-content').value;
-
             const newAnn = { id: 'ann_' + Date.now(), title, content, time: new Date().toLocaleString() };
             await saveCloudItem('announcements', newAnn.id, newAnn);
-
-            const users = getStoredData('users', []);
-            for (let u of users) {
-                if (!u.notifications) u.notifications = [];
-                u.notifications.unshift({ id: 'notif_' + Date.now(), title: `📢 ${title}`, text: content, time: new Date().toLocaleTimeString(), read: false });
-                await saveCloudItem('users', u.id, u);
-            }
             alert('Announcement posted!');
             render();
         }
 
         async function deleteNovel(novelId) {
-            if (!confirm('Delete this novel?')) return;
+            if (!confirm('Delete novel?')) return;
             await deleteCloudItem('novels', novelId);
             render();
         }
@@ -633,7 +482,7 @@
             };
 
             await saveCloudItem('novels', newNovel.id, newNovel);
-            alert('Novel published successfully!');
+            alert('Novel published!');
             render();
         }
 
@@ -648,7 +497,7 @@
                 if (!novel.chapters) novel.chapters = [];
                 novel.chapters.push({ id: 'ch_' + Date.now(), title, content });
                 await saveCloudItem('novels', novel.id, novel);
-                alert('Chapter published successfully!');
+                alert('Chapter published!');
                 render();
             }
         }
@@ -674,27 +523,13 @@
             render();
         }
 
-        async function authorReplyComment(commentId) {
-            const replyText = prompt('Author reply:');
-            if (!replyText) return;
-
-            const comments = getStoredData('comments', []);
-            const comment = comments.find(c => c.id === commentId);
-            if (comment) {
-                comment.reply = replyText;
-                await saveCloudItem('comments', comment.id, comment);
-                render();
-            }
-        }
-
         // --- RENDER ROUTER ---
         function render() {
             const app = document.getElementById('app');
             app.className = "flex-1 flex flex-col";
             app.innerHTML = '';
 
-            if (currentView === 'login') app.innerHTML = renderLogin();
-            else if (currentView === 'signup') app.innerHTML = renderLogin(); // Combined into single login/signup screen with Google Auth
+            if (currentView === 'login' || currentView === 'signup') app.innerHTML = renderLogin();
             else if (currentView === 'role_select') app.innerHTML = renderRoleSelect();
             else if (currentView === 'reader_home') app.innerHTML = renderReaderHome();
             else if (currentView === 'reader_novel') app.innerHTML = renderReaderNovel();
@@ -713,12 +548,6 @@
             const unreadCount = (currentUser.notifications || []).filter(n => !n.read).length;
 
             return `
-                ${adminImpersonator ? `
-                    <div class="bg-amber-600 text-slate-950 px-4 py-2 text-xs font-black flex justify-between items-center shadow-lg">
-                        <span>👻 GHOST MODE ACTIVE: Viewing as <b>${currentUser.name}</b></span>
-                        <button onclick="handleLogout()" class="bg-slate-950 text-white px-3 py-1 rounded text-[11px] font-bold">Exit Ghost Mode 🚪</button>
-                    </div>
-                ` : ''}
                 <nav class="bg-slate-900 border-b border-slate-800 px-6 py-4 flex justify-between items-center sticky top-0 z-50">
                     <div class="flex items-center space-x-3 cursor-pointer" onclick="navigate('${logoDestination}')">
                         <i class="fa-solid fa-book-open-reader text-indigo-500 text-2xl"></i>
@@ -741,8 +570,8 @@
                                 <i class="fa-solid fa-rotate mr-1"></i> Switch
                             </button>
                         ` : ''}
-                        <button onclick="handleLogout()" class="text-xs ${adminImpersonator ? 'bg-amber-600 text-white font-bold' : 'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'} px-3 py-1.5 rounded-lg transition">
-                            <i class="fa-solid ${adminImpersonator ? 'fa-ghost' : 'fa-arrow-right-from-bracket'} mr-1"></i> ${adminImpersonator ? 'Exit Ghost' : 'Logout'}
+                        <button onclick="handleLogout()" class="text-xs bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30 px-3 py-1.5 rounded-lg transition">
+                            <i class="fa-solid fa-arrow-right-from-bracket mr-1"></i> Logout
                         </button>
                     </div>
                 </nav>
@@ -751,18 +580,11 @@
                     <div class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                         <div class="bg-slate-900 border border-slate-800 p-6 rounded-2xl w-full max-w-md relative shadow-2xl">
                             <button onclick="showUserSettingsModal = false; render();" class="absolute top-4 right-4 text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
-                            <h3 class="text-xl font-bold text-white mb-1"><i class="fa-solid fa-user-gear text-indigo-400 mr-2"></i> Account Settings</h3>
-                            <p class="text-xs text-slate-400 mb-6">Update your password.</p>
-                            <form onsubmit="handleUserPasswordChange(event)" class="space-y-4">
-                                <div>
-                                    <label class="block text-xs font-semibold text-slate-400 mb-1">Current Password</label>
-                                    <input type="password" id="settings-current-pass" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-xs">
-                                </div>
-                                <div>
-                                    <label class="block text-xs font-semibold text-slate-400 mb-1">New Password</label>
-                                    <input type="password" id="settings-new-pass" required class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-xs">
-                                </div>
-                                <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold py-2.5 rounded-lg">Save Password</button>
+                            <h3 class="text-xl font-bold text-white mb-1">Account Settings</h3>
+                            <form onsubmit="handleUserPasswordChange(event)" class="space-y-4 mt-4">
+                                <div><label class="block text-xs text-slate-400 mb-1">Current Password</label><input type="password" id="settings-current-pass" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs"></div>
+                                <div><label class="block text-xs text-slate-400 mb-1">New Password</label><input type="password" id="settings-new-pass" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs"></div>
+                                <button type="submit" class="w-full bg-indigo-600 text-white text-xs font-bold py-2.5 rounded-lg">Save Password</button>
                             </form>
                         </div>
                     </div>
@@ -773,42 +595,33 @@
         function renderMailbox() {
             const notifs = currentUser.notifications || [];
             const isAdmin = currentUser.role === 'admin' || currentUser.role === 'co-admin';
-            const backDest = isAdmin ? 'admin_home' : (activeRole === 'author' && currentUser.suspendMode !== 'author' && currentUser.suspendMode !== 'both' ? 'author_home' : 'reader_home');
+            const backDest = isAdmin ? 'admin_home' : 'reader_home';
             const activeNotif = notifs.find(n => n.id === openedNotificationId);
 
             return `
                 ${renderNavbar()}
                 <div class="flex-1 max-w-3xl w-full mx-auto px-6 py-8">
-                    <button onclick="navigate('${backDest}')" class="text-sm text-indigo-400 hover:underline mb-6 inline-block">
-                        <i class="fa-solid fa-arrow-left mr-1"></i> Back
-                    </button>
+                    <button onclick="navigate('${backDest}')" class="text-sm text-indigo-400 hover:underline mb-6 inline-block">← Back</button>
                     <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 mb-6">
-                        <h1 class="text-2xl font-bold text-white mb-1"><i class="fa-solid fa-inbox text-indigo-400 mr-2"></i> Mailbox & Notifications</h1>
+                        <h1 class="text-2xl font-bold text-white">Mailbox & Notifications</h1>
                     </div>
 
                     ${activeNotif ? `
                         <div class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                             <div class="bg-slate-900 border border-indigo-500/50 p-6 rounded-2xl w-full max-w-lg relative shadow-2xl">
-                                <button onclick="openedNotificationId = null; render();" class="absolute top-4 right-4 text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+                                <button onclick="openedNotificationId = null; render();" class="absolute top-4 right-4 text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
                                 <h3 class="text-xl font-bold text-white mb-4">${activeNotif.title}</h3>
-                                <div class="space-y-4 text-sm bg-slate-950 p-5 rounded-xl border border-slate-800 text-slate-200 whitespace-pre-line">
-                                    ${activeNotif.text}
-                                </div>
-                                <button onclick="openedNotificationId = null; render();" class="mt-6 bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-5 py-2.5 rounded-lg font-semibold">Close</button>
+                                <div class="bg-slate-950 p-4 rounded-xl text-slate-200 text-sm whitespace-pre-line mb-4">${activeNotif.text}</div>
+                                <button onclick="openedNotificationId = null; render();" class="bg-indigo-600 text-white text-xs px-4 py-2 rounded-lg">Close</button>
                             </div>
                         </div>
                     ` : ''}
 
                     <div class="space-y-3">
-                        ${notifs.length === 0 ? '<p class="text-slate-500 text-sm italic">Your mailbox is empty.</p>' : ''}
                         ${notifs.map(n => `
-                            <div onclick="openNotificationModal('${n.id}')" class="bg-slate-900 border ${n.read ? 'border-slate-800 opacity-75' : 'border-indigo-500/60 bg-indigo-950/20'} p-4 rounded-xl flex justify-between items-center cursor-pointer hover:border-indigo-400 transition">
-                                <div>
-                                    <h4 class="text-sm font-bold text-white">${n.title}</h4>
-                                    <p class="text-xs text-slate-300 mt-1 line-clamp-1">${n.text}</p>
-                                    <span class="text-[10px] text-slate-500 mt-1 block">${n.time}</span>
-                                </div>
-                                <span class="text-xs text-indigo-400 font-semibold bg-indigo-950 px-3 py-1.5 rounded-lg border border-indigo-800/50">View</span>
+                            <div onclick="openNotificationModal('${n.id}')" class="bg-slate-900 border ${n.read ? 'border-slate-800' : 'border-indigo-500'} p-4 rounded-xl cursor-pointer">
+                                <h4 class="text-sm font-bold text-white">${n.title}</h4>
+                                <p class="text-xs text-slate-300 mt-1 line-clamp-1">${n.text}</p>
                             </div>
                         `).join('')}
                     </div>
@@ -817,40 +630,14 @@
         }
 
         function renderLogin() {
-            const tickets = getStoredData('recovery_tickets', []);
-            const currentActiveTicket = tickets.find(t => t.id === activeRecoveryTicketId);
-
             return `
-                <div class="flex-1 flex items-center justify-center p-6 bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 relative w-full">
-                    
-                    ${showForgotPasswordModal ? `
-                        <div class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                            <div class="bg-slate-900 border border-indigo-500/50 p-6 rounded-2xl w-full max-w-md relative shadow-2xl">
-                                <button onclick="showForgotPasswordModal = false; render();" class="absolute top-4 right-4 text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
-                                <h3 class="text-xl font-bold text-white mb-1"><i class="fa-solid fa-key text-indigo-400 mr-2"></i> Password Recovery</h3>
-                                <form onsubmit="submitRecoveryTicket(event)" class="space-y-3 mt-4">
-                                    <div>
-                                        <label class="block text-xs font-semibold text-slate-400 mb-1">Your Account Email</label>
-                                        <input type="email" id="rec-email" required class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-xs" placeholder="you@gmail.com">
-                                    </div>
-                                    <div>
-                                        <label class="block text-xs font-semibold text-slate-400 mb-1">Proof of Ownership</label>
-                                        <textarea id="rec-proof" rows="3" required class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-xs" placeholder="Details..."></textarea>
-                                    </div>
-                                    <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold py-2.5 rounded-lg">Submit to DR Loom</button>
-                                </form>
-                            </div>
-                        </div>
-                    ` : ''}
+                <div class="flex-1 flex items-center justify-center p-6 bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 w-full">
+                    <div class="bg-slate-900 border border-slate-800 p-8 rounded-2xl w-full max-w-md shadow-2xl text-center">
+                        <i class="fa-solid fa-book-sparkles text-indigo-500 text-4xl mb-2"></i>
+                        <h1 class="text-2xl font-bold text-white mb-1">NovelVerse</h1>
+                        <p class="text-xs text-slate-400 mb-6">Sign in securely with your Google Account</p>
 
-                    <div class="bg-slate-900 border border-slate-800 p-8 rounded-2xl w-full max-w-md shadow-2xl">
-                        <div class="text-center mb-6">
-                            <i class="fa-solid fa-book-sparkles text-indigo-500 text-4xl mb-2"></i>
-                            <h1 class="text-2xl font-bold text-white">NovelVerse</h1>
-                            <p class="text-xs text-slate-400 mt-1">Sign in with your secure Google Account</p>
-                        </div>
-
-                        <!-- OFFICIAL GOOGLE SIGN IN BUTTON (BLOCKED FOR DUMMIES) -->
+                        <!-- SECURE GOOGLE SIGN IN BUTTON -->
                         <button type="button" onclick="handleGoogleLogin()" class="w-full bg-white hover:bg-slate-100 text-slate-900 font-bold py-3 px-4 rounded-xl transition flex items-center justify-center space-x-3 shadow-lg mb-6">
                             <i class="fa-brands fa-google text-red-500 text-lg"></i>
                             <span class="text-sm">Sign in with Google</span>
@@ -862,16 +649,10 @@
                             <div class="flex-grow border-t border-slate-800"></div>
                         </div>
 
-                        <form onsubmit="handleLogin(event)" class="space-y-4">
-                            <div>
-                                <label class="block text-xs font-semibold text-slate-400 mb-1">Admin User ID</label>
-                                <input type="text" id="login-email" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-xs" placeholder="DR LOOM">
-                            </div>
-                            <div>
-                                <label class="block text-xs font-semibold text-slate-400 mb-1">Admin Password</label>
-                                <input type="password" id="login-password" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-xs" placeholder="••••••••">
-                            </div>
-                            <button type="submit" class="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium py-2 rounded-lg text-xs transition">Admin Login</button>
+                        <form onsubmit="handleLogin(event)" class="space-y-3 text-left">
+                            <div><label class="block text-xs text-slate-400 mb-1">Admin User ID</label><input type="text" id="login-email" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs"></div>
+                            <div><label class="block text-xs text-slate-400 mb-1">Password</label><input type="password" id="login-password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs"></div>
+                            <button type="submit" class="w-full bg-slate-800 text-slate-300 py-2 rounded-lg text-xs font-bold">Admin Login</button>
                         </form>
                     </div>
                 </div>
@@ -879,24 +660,13 @@
         }
 
         function renderRoleSelect() {
-            if (currentUser.suspendMode === 'author' || currentUser.suspendMode === 'both') {
-                navigate('reader_home', 'reader');
-                return '';
-            }
             return `
-                <div class="flex-1 flex items-center justify-center p-6 bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 w-full">
-                    <div class="bg-slate-900 border border-slate-800 p-8 rounded-2xl w-full max-w-lg text-center shadow-2xl">
-                        <h1 class="text-2xl font-bold text-white mb-2">Welcome, ${currentUser.name}!</h1>
-                        <p class="text-slate-400 text-sm mb-8">Choose how to enter NovelVerse:</p>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <button onclick="navigate('reader_home', 'reader')" class="p-6 bg-slate-950 border border-slate-800 hover:border-indigo-500 rounded-xl transition text-left">
-                                <i class="fa-solid fa-book-open text-indigo-400 text-2xl mb-3"></i>
-                                <h3 class="font-bold text-white">Reader Mode</h3>
-                            </button>
-                            <button onclick="navigate('author_home', 'author')" class="p-6 bg-slate-950 border border-slate-800 hover:border-purple-500 rounded-xl transition text-left">
-                                <i class="fa-solid fa-pen-nib text-purple-400 text-2xl mb-3"></i>
-                                <h3 class="font-bold text-white">Author Studio</h3>
-                            </button>
+                <div class="flex-1 flex items-center justify-center p-6 bg-slate-950 w-full">
+                    <div class="bg-slate-900 border border-slate-800 p-8 rounded-2xl w-full max-w-md text-center">
+                        <h1 class="text-2xl font-bold text-white mb-6">Welcome, ${currentUser.name}!</h1>
+                        <div class="grid grid-cols-2 gap-4">
+                            <button onclick="navigate('reader_home', 'reader')" class="p-4 bg-slate-950 border border-slate-800 rounded-xl text-white font-bold">Reader</button>
+                            <button onclick="navigate('author_home', 'author')" class="p-4 bg-slate-950 border border-slate-800 rounded-xl text-white font-bold">Author</button>
                         </div>
                     </div>
                 </div>
@@ -905,60 +675,22 @@
 
         function renderReaderHome() {
             const novels = getStoredData('novels', []);
-            const announcements = getStoredData('announcements', []);
-            const isAdmin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'co-admin');
-
-            const filteredNovels = novels.filter(n => 
-                n.title.toLowerCase().includes(readerNovelSearchQuery.toLowerCase()) ||
-                n.genre.toLowerCase().includes(readerNovelSearchQuery.toLowerCase()) ||
-                n.authorName.toLowerCase().includes(readerNovelSearchQuery.toLowerCase())
-            );
+            const isAdmin = currentUser && currentUser.role === 'admin';
+            const filtered = novels.filter(n => n.title.toLowerCase().includes(readerNovelSearchQuery.toLowerCase()));
 
             return `
                 ${renderNavbar()}
                 <div class="flex-1 max-w-6xl w-full mx-auto px-6 py-8">
-                    ${isAdmin ? `
-                        <div class="mb-6">
-                            <button onclick="navigate('admin_home')" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition">
-                                ← Back to Admin Dashboard
-                            </button>
-                        </div>
-                    ` : ''}
-
-                    ${announcements.length > 0 ? `
-                        <div class="bg-indigo-950/40 border border-indigo-800/50 rounded-xl p-4 mb-8 flex items-center space-x-3">
-                            <i class="fa-solid fa-bullhorn text-indigo-400 text-xl"></i>
-                            <div>
-                                <span class="text-xs font-bold text-indigo-400 uppercase">Announcement</span>
-                                <p class="text-sm font-bold text-white">${announcements[0].title}</p>
-                                <p class="text-xs text-slate-300">${announcements[0].content}</p>
-                            </div>
-                        </div>
-                    ` : ''}
-
-                    <div class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
-                        <h1 class="text-3xl font-bold text-white">Explore Free Novels</h1>
-                        <div class="w-full md:w-80 relative">
-                            <i class="fa-solid fa-search absolute left-3.5 top-3 text-slate-400 text-sm"></i>
-                            <input type="text" value="${readerNovelSearchQuery}" oninput="readerNovelSearchQuery = this.value; render();" placeholder="Search novels..." class="w-full bg-slate-900 border border-slate-800 rounded-xl pl-10 pr-4 py-2 text-sm text-white">
-                        </div>
+                    ${isAdmin ? `<button onclick="navigate('admin_home')" class="bg-indigo-600 text-white text-xs font-bold px-4 py-2 rounded-lg mb-6">← Admin Dashboard</button>` : ''}
+                    <div class="flex justify-between items-center mb-8">
+                        <h1 class="text-3xl font-bold text-white">Explore Novels</h1>
+                        <input type="text" value="${readerNovelSearchQuery}" oninput="readerNovelSearchQuery = this.value; render();" placeholder="Search..." class="bg-slate-900 border border-slate-800 rounded-xl px-4 py-2 text-sm text-white w-64">
                     </div>
-
-                    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                        ${filteredNovels.map(novel => `
-                            <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden group flex flex-col justify-between">
-                                <div class="cursor-pointer" onclick="selectedNovelId = '${novel.id}'; navigate('reader_novel');">
-                                    <img src="${novel.cover}" alt="${novel.title}" class="h-48 w-full object-cover group-hover:scale-105 transition duration-300">
-                                    <div class="p-4">
-                                        <span class="text-xs font-semibold text-indigo-400 uppercase">${novel.genre}</span>
-                                        <h3 class="font-bold text-white text-base mt-1 line-clamp-1">${novel.title}</h3>
-                                        <p class="text-xs text-slate-400 mt-1">By ${novel.authorName}</p>
-                                    </div>
-                                </div>
-                                <div class="px-4 pb-4 flex justify-between items-center text-xs border-t border-slate-800/60 pt-2">
-                                    <span class="text-slate-500">${(novel.chapters || []).length} Chapters</span>
-                                    <button onclick="submitReport('Author', '${novel.authorId}', '${novel.authorName}', '${novel.authorId}', '${novel.authorName}')" class="text-red-400 hover:underline"><i class="fa-solid fa-flag mr-1"></i> Report</button>
-                                </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6">
+                        ${filtered.map(novel => `
+                            <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden cursor-pointer" onclick="selectedNovelId = '${novel.id}'; navigate('reader_novel');">
+                                <img src="${novel.cover}" class="h-48 w-full object-cover">
+                                <div class="p-4"><h3 class="font-bold text-white">${novel.title}</h3><p class="text-xs text-slate-400">By ${novel.authorName}</p></div>
                             </div>
                         `).join('')}
                     </div>
@@ -974,24 +706,20 @@
             return `
                 ${renderNavbar()}
                 <div class="flex-1 max-w-4xl w-full mx-auto px-6 py-8">
-                    <button onclick="navigate('reader_home')" class="text-sm text-indigo-400 hover:underline mb-6 inline-block">
-                        <i class="fa-solid fa-arrow-left mr-1"></i> Back to Library
-                    </button>
-                    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 md:p-8 flex flex-col md:flex-row gap-6 mb-8 relative">
-                        <img src="${novel.cover}" class="w-full md:w-48 h-64 object-cover rounded-xl shadow-md">
+                    <button onclick="navigate('reader_home')" class="text-sm text-indigo-400 mb-6 inline-block">← Back</button>
+                    <div class="bg-slate-900 border border-slate-800 p-6 rounded-2xl flex gap-6 mb-8">
+                        <img src="${novel.cover}" class="w-48 h-64 object-cover rounded-xl">
                         <div>
-                            <span class="text-xs px-2.5 py-1 rounded-full bg-indigo-950 border border-indigo-800 text-indigo-300 font-medium">${novel.genre}</span>
-                            <h1 class="text-2xl md:text-3xl font-bold text-white mt-3">${novel.title}</h1>
-                            <p class="text-sm text-slate-400 mt-1">Author: <span class="text-slate-200 font-medium">${novel.authorName}</span></p>
-                            <p class="text-slate-300 text-sm mt-4 leading-relaxed">${novel.synopsis}</p>
+                            <h1 class="text-3xl font-bold text-white">${novel.title}</h1>
+                            <p class="text-sm text-slate-400 mt-1">Author: ${novel.authorName}</p>
+                            <p class="text-slate-300 text-sm mt-4">${novel.synopsis}</p>
                         </div>
                     </div>
-
-                    <h2 class="text-xl font-bold text-white mb-4">Chapters (${(novel.chapters || []).length})</h2>
+                    <h2 class="text-xl font-bold text-white mb-4">Chapters</h2>
                     <div class="space-y-3">
-                        ${(novel.chapters || []).map((ch, index) => `
-                            <div class="bg-slate-900 border border-slate-800 hover:border-indigo-500 p-4 rounded-xl flex justify-between items-center transition">
-                                <span onclick="selectedChapterId = '${ch.id}'; navigate('reader_read');" class="text-sm font-medium text-slate-200 cursor-pointer flex-1">Chapter ${index + 1}: ${ch.title}</span>
+                        ${(novel.chapters || []).map((ch, idx) => `
+                            <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl cursor-pointer text-slate-200" onclick="selectedChapterId = '${ch.id}'; navigate('reader_read');">
+                                Chapter ${idx + 1}: ${ch.title}
                             </div>
                         `).join('')}
                     </div>
@@ -1003,51 +731,30 @@
             const novels = getStoredData('novels', []);
             const novel = novels.find(n => n.id === selectedNovelId);
             if (!novel) return renderReaderHome();
-            
-            const chapters = novel.chapters || [];
-            const chapterIndex = chapters.findIndex(ch => ch.id === selectedChapterId);
-            const chapter = chapters[chapterIndex];
+            const chapter = (novel.chapters || []).find(ch => ch.id === selectedChapterId);
             if (!chapter) return renderReaderNovel();
 
             const comments = getStoredData('comments', []).filter(c => c.chapterId === chapter.id);
-            const prevChapter = chapterIndex > 0 ? chapters[chapterIndex - 1] : null;
-            const nextChapter = chapterIndex < chapters.length - 1 ? chapters[chapterIndex + 1] : null;
 
             return `
                 ${renderNavbar()}
                 <div class="flex-1 max-w-3xl w-full mx-auto px-6 py-8">
-                    <button onclick="navigate('reader_novel')" class="text-sm text-indigo-400 hover:underline mb-6 inline-block">
-                        <i class="fa-solid fa-arrow-left mr-1"></i> Back to Novel Details
-                    </button>
-                    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-xl mb-6">
-                        <span class="text-xs text-indigo-400 font-medium uppercase tracking-wider">${novel.title}</span>
-                        <h1 class="text-2xl font-bold text-white mt-1 mb-6">${chapter.title}</h1>
-                        <hr class="border-slate-800 mb-6">
-                        <div class="text-slate-300 leading-loose whitespace-pre-line text-base">
-                            ${chapter.content}
-                        </div>
+                    <button onclick="navigate('reader_novel')" class="text-sm text-indigo-400 mb-6 inline-block">← Back</button>
+                    <div class="bg-slate-900 border border-slate-800 p-8 rounded-2xl mb-6">
+                        <h1 class="text-2xl font-bold text-white mb-6">${chapter.title}</h1>
+                        <div class="text-slate-300 leading-loose whitespace-pre-line">${chapter.content}</div>
                     </div>
-
-                    <div class="flex justify-between items-center mb-8 bg-slate-900 border border-slate-800 p-4 rounded-xl">
-                        ${prevChapter ? `<button onclick="selectedChapterId = '${prevChapter.id}'; render(); window.scrollTo(0,0);" class="bg-slate-800 text-slate-200 text-xs px-4 py-2 rounded-lg">Prev Chapter</button>` : '<span></span>'}
-                        ${nextChapter ? `<button onclick="selectedChapterId = '${nextChapter.id}'; render(); window.scrollTo(0,0);" class="bg-indigo-600 text-white text-xs px-4 py-2 rounded-lg ml-auto">Next Chapter</button>` : ''}
-                    </div>
-
-                    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                    <div class="bg-slate-900 border border-slate-800 p-6 rounded-2xl">
                         <h3 class="text-lg font-bold text-white mb-4">Comments</h3>
                         <form onsubmit="postComment(event)" class="mb-6 space-y-3">
-                            <textarea id="comment-text" rows="2" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-white text-sm" placeholder="Leave a comment..."></textarea>
+                            <textarea id="comment-text" rows="2" required class="w-full bg-slate-950 border border-slate-800 p-3 rounded-lg text-white text-sm" placeholder="Leave a comment..."></textarea>
                             <button type="submit" class="bg-indigo-600 text-white text-xs px-4 py-2 rounded-lg">Post</button>
                         </form>
                         <div class="space-y-3">
                             ${comments.map(c => `
-                                <div class="bg-slate-950 border border-slate-800 p-3.5 rounded-xl">
-                                    <div class="flex justify-between items-center mb-1">
-                                        <span class="text-xs font-bold text-indigo-300">${c.userName}</span>
-                                        <span class="text-[10px] text-slate-500">${c.time}</span>
-                                    </div>
-                                    <p class="text-xs text-slate-300">${c.text}</p>
-                                    ${c.reply ? `<p class="text-xs text-purple-400 mt-2 bg-purple-950/30 p-2 rounded"><b>Author Reply:</b> ${c.reply}</p>` : ''}
+                                <div class="bg-slate-950 border border-slate-800 p-3 rounded-xl">
+                                    <span class="text-xs font-bold text-indigo-300">${c.userName}</span>
+                                    <p class="text-xs text-slate-300 mt-1">${c.text}</p>
                                 </div>
                             `).join('')}
                         </div>
@@ -1057,36 +764,28 @@
         }
 
         function renderAuthorHome() {
-            const novels = getStoredData('novels', []);
-            const myNovels = novels.filter(n => n.authorId === currentUser.id);
-
+            const novels = getStoredData('novels', []).filter(n => n.authorId === currentUser.id);
             return `
                 ${renderNavbar()}
                 <div class="flex-1 max-w-6xl w-full mx-auto px-6 py-8">
-                    <div class="flex justify-between items-center mb-8">
-                        <h1 class="text-3xl font-bold text-white">Author Studio</h1>
-                    </div>
+                    <h1 class="text-3xl font-bold text-white mb-6">Author Studio</h1>
                     <div class="bg-slate-900 border border-slate-800 p-6 rounded-2xl mb-8">
                         <h2 class="text-lg font-bold text-white mb-4">Publish New Novel</h2>
                         <form onsubmit="createNovel(event)" class="space-y-4">
-                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div><label class="block text-xs text-slate-400 mb-1">Title</label><input type="text" id="novel-title" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs"></div>
-                                <div><label class="block text-xs text-slate-400 mb-1">Genre</label><input type="text" id="novel-genre" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs"></div>
+                            <div class="grid grid-cols-2 gap-4">
+                                <input type="text" id="novel-title" required placeholder="Title" class="bg-slate-950 border border-slate-800 p-2 rounded text-white text-xs">
+                                <input type="text" id="novel-genre" required placeholder="Genre" class="bg-slate-950 border border-slate-800 p-2 rounded text-white text-xs">
                             </div>
-                            <div><label class="block text-xs text-slate-400 mb-1">Cover Image URL</label><input type="url" id="novel-cover" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs"></div>
-                            <div><label class="block text-xs text-slate-400 mb-1">Synopsis</label><textarea id="novel-synopsis" rows="3" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs"></textarea></div>
-                            <button type="submit" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-xs font-bold">Publish Novel</button>
+                            <input type="url" id="novel-cover" placeholder="Cover Image URL" class="w-full bg-slate-950 border border-slate-800 p-2 rounded text-white text-xs">
+                            <textarea id="novel-synopsis" rows="3" required placeholder="Synopsis" class="w-full bg-slate-950 border border-slate-800 p-2 rounded text-white text-xs"></textarea>
+                            <button type="submit" class="bg-indigo-600 text-white px-4 py-2 rounded text-xs font-bold">Publish</button>
                         </form>
                     </div>
-                    <h2 class="text-xl font-bold text-white mb-4">Your Novels</h2>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        ${myNovels.map(novel => `
-                            <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 flex justify-between items-center">
-                                <div>
-                                    <h3 class="font-bold text-white">${novel.title}</h3>
-                                    <span class="text-xs text-slate-400">${(novel.chapters || []).length} Chapters</span>
-                                </div>
-                                <button onclick="editingNovelId = '${novel.id}'; navigate('author_edit');" class="text-xs text-indigo-400 bg-indigo-950 px-3 py-2 rounded-lg">Edit Chapters</button>
+                    <div class="grid grid-cols-2 gap-6">
+                        ${novels.map(n => `
+                            <div class="bg-slate-900 border border-slate-800 p-6 rounded-xl flex justify-between items-center">
+                                <div><h3 class="font-bold text-white">${n.title}</h3><span class="text-xs text-slate-400">${(n.chapters || []).length} Chapters</span></div>
+                                <button onclick="editingNovelId = '${n.id}'; navigate('author_edit');" class="text-xs bg-indigo-950 text-indigo-300 px-3 py-2 rounded">Edit</button>
                             </div>
                         `).join('')}
                     </div>
@@ -1095,20 +794,18 @@
         }
 
         function renderAuthorEdit() {
-            const novels = getStoredData('novels', []);
-            const novel = novels.find(n => n.id === editingNovelId);
+            const novel = getStoredData('novels', []).find(n => n.id === editingNovelId);
             if (!novel) return renderAuthorHome();
-
             return `
                 ${renderNavbar()}
                 <div class="flex-1 max-w-4xl w-full mx-auto px-6 py-8">
-                    <button onclick="navigate('author_home')" class="text-sm text-indigo-400 hover:underline mb-6 inline-block">← Back</button>
-                    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                    <button onclick="navigate('author_home')" class="text-sm text-indigo-400 mb-6 inline-block">← Back</button>
+                    <div class="bg-slate-900 border border-slate-800 p-6 rounded-2xl">
                         <h2 class="text-lg font-bold text-white mb-4">Add Chapter to ${novel.title}</h2>
                         <form onsubmit="addChapter(event)" class="space-y-4">
-                            <div><label class="block text-xs text-slate-400 mb-1">Chapter Title</label><input type="text" id="ch-title" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs"></div>
-                            <div><label class="block text-xs text-slate-400 mb-1">Content</label><textarea id="ch-content" rows="8" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs"></textarea></div>
-                            <button type="submit" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-xs font-bold">Publish Chapter</button>
+                            <input type="text" id="ch-title" required placeholder="Chapter Title" class="w-full bg-slate-950 border border-slate-800 p-2 rounded text-white text-xs">
+                            <textarea id="ch-content" rows="8" required placeholder="Content" class="w-full bg-slate-950 border border-slate-800 p-2 rounded text-white text-xs"></textarea>
+                            <button type="submit" class="bg-indigo-600 text-white px-4 py-2 rounded text-xs font-bold">Publish Chapter</button>
                         </form>
                     </div>
                 </div>
@@ -1116,11 +813,9 @@
         }
 
         function renderAdminHome() {
-            const users = getStoredData('users', []).filter(u => u.role !== 'admin' && u.role !== 'co-admin');
+            const users = getStoredData('users', []).filter(u => u.role !== 'admin');
             const novels = getStoredData('novels', []);
             const reports = getStoredData('reports', []);
-            const recoveryTickets = getStoredData('recovery_tickets', []);
-
             return `
                 ${renderNavbar()}
                 <div class="flex-1 max-w-6xl w-full mx-auto px-6 py-8">
@@ -1136,7 +831,7 @@
                             ${users.map(u => `
                                 <div class="bg-slate-950 p-4 rounded-xl flex justify-between items-center border border-slate-800">
                                     <div><p class="text-sm font-bold text-white">${u.name}</p><p class="text-xs text-slate-400">${u.email}</p></div>
-                                    <button onclick="deleteUserCompletely('${u.id}')" class="bg-red-950/40 text-red-400 text-xs px-3 py-1.5 rounded border border-red-500/20">Delete</button>
+                                    <button onclick="deleteUserCompletely('${u.id}')" class="bg-red-950 text-red-400 text-xs px-3 py-1.5 rounded">Delete</button>
                                 </div>
                             `).join('')}
                         </div>
