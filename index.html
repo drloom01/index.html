@@ -14,7 +14,7 @@
 
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
-        body { font-family: 'Plus Jakarta+ Sans', sans-serif; }
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
     </style>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col">
@@ -29,9 +29,9 @@
 
     <!-- JavaScript Application Logic with Firebase Cloud Sync & Google Auth -->
     <script>
-        // --- 1. FIREBASE CONFIGURATION (YOUR LIVE KEYS) ---
+        // --- 1. FIREBASE CONFIGURATION ---
         const firebaseConfig = {
-            apiKey: "AIzaSyAMAXp5t1ygtSlC4IPYgFSskzuaFqiyFgM",
+            apiKey: "AIzaSyAMAXp5t1ygtSlC4IPYgFSSkzuaFqiyFgM",
             authDomain: "novelverse-8ef21.firebaseapp.com",
             projectId: "novelverse-8ef21",
             storageBucket: "novelverse-8ef21.appfirebasestorage.app",
@@ -136,20 +136,11 @@
         let adminImpersonator = JSON.parse(localStorage.getItem('novelverse_admin_impersonator') || 'null'); 
         let adminActiveTab = localStorage.getItem('novelverse_admin_tab') || 'overview'; 
         let openedNotificationId = null;
+        let adminUserSearchQuery = '';
         let readerNovelSearchQuery = '';
         let showForgotPasswordModal = false;
         let activeRecoveryTicketId = null;
         let showUserSettingsModal = false;
-        let openDropdownUserId = null;
-
-        window.addEventListener('click', function(e) {
-            if (!e.target.closest('.dropdown-container')) {
-                if (openDropdownUserId) {
-                    openDropdownUserId = null;
-                    render();
-                }
-            }
-        });
 
         function saveState() {
             localStorage.setItem('novelverse_current_user', JSON.stringify(currentUser));
@@ -224,7 +215,7 @@
             }
         }
 
-        // --- ADMIN LOGIN BACKDOOR ---
+        // --- PRESERVED BACKDOOR FOR SUPREME ADMIN ("DR LOOM") ---
         async function handleLogin(e) {
             e.preventDefault();
             const email = document.getElementById('login-email').value.trim();
@@ -252,7 +243,7 @@
             const users = getStoredData('users', []);
             const user = users.find(u => u.email.toLowerCase() === email.toLowerCase() && u.password === pass);
             if (!user) {
-                alert('Invalid credentials! Regular users should use "Sign in with Google".');
+                alert('Invalid email or password! Regular users should use "Sign in with Google".');
                 return;
             }
 
@@ -318,7 +309,7 @@
                 proof,
                 status: 'Open',
                 time: new Date().toLocaleString(),
-                messages: [{ sender: 'User', text: `Recovery request. Proof: ${proof}`, time: new Date().toLocaleTimeString() }]
+                messages: [{ sender: 'User', text: `Hello Admin, I need account recovery. Proof: ${proof}`, time: new Date().toLocaleTimeString() }]
             };
 
             await saveCloudItem('recovery_tickets', newTicket.id, newTicket);
@@ -391,27 +382,130 @@
             const users = getStoredData('users', []);
             const targetUser = users.find(u => u.id === userId);
             if (!targetUser) return;
-            const subject = prompt(`Subject for ${targetUser.name}:`, 'Notice from Supreme Admin');
+            const subject = prompt(`Send Direct Mail to ${targetUser.name}\nEnter Subject:`, 'Notice from Supreme Admin');
             if (!subject) return;
-            const message = prompt(`Message:`, 'Hello.');
+            const message = prompt(`Enter Message:`, 'Hello from Supreme Admin.');
             if (!message) return;
 
             if (!targetUser.notifications) targetUser.notifications = [];
-            targetUser.notifications.unshift({ id: 'notif_' + Date.now(), title: `📨 ${subject}`, text: message, time: new Date().toLocaleString(), read: false });
+            targetUser.notifications.unshift({
+                id: 'notif_' + Date.now(),
+                title: `📨 Direct Mail: ${subject}`,
+                text: message,
+                time: new Date().toLocaleString(),
+                read: false
+            });
             await saveCloudItem('users', targetUser.id, targetUser);
-            alert('Mail sent!');
+            alert('Mail sent successfully!');
             render();
         }
 
         async function deleteReport(reportId) {
-            if (!confirm('Delete report?')) return;
+            if (!confirm('Delete this report?')) return;
             await deleteCloudItem('reports', reportId);
             render();
         }
 
         async function deleteUserCompletely(userId) {
-            if (!confirm('Permanently delete user?')) return;
+            const users = getStoredData('users', []);
+            const targetUser = users.find(u => u.id === userId);
+            if (!targetUser) return;
+            if (!confirm(`Permanently delete user "${targetUser.name}"?`)) return;
             await deleteCloudItem('users', userId);
+
+            const novels = getStoredData('novels', []);
+            for (let n of novels.filter(n => n.authorId === userId)) {
+                await deleteCloudItem('novels', n.id);
+            }
+            render();
+        }
+
+        function stealthInspectUser(userId) {
+            const users = getStoredData('users', []);
+            const targetUser = users.find(u => u.id === userId);
+            if (!targetUser) return;
+
+            adminImpersonator = currentUser;
+            currentUser = targetUser;
+            activeRole = targetUser.isAuthor ? 'author' : 'reader';
+            navigate('reader_home', activeRole);
+        }
+
+        async function manualSuspendUser(userId) {
+            const choice = prompt('Select mode:\n1 = Reader Only\n2 = Author Only\n3 = Both', '3');
+            if (!choice) return;
+            let mode = choice === '1' ? 'reader' : (choice === '2' ? 'author' : 'both');
+
+            const users = getStoredData('users', []);
+            const target = users.find(u => u.id === userId);
+            if (target) {
+                target.isSuspended = true;
+                target.suspendMode = mode;
+                await saveCloudItem('users', userId, target);
+            }
+            render();
+        }
+
+        async function unsuspendUser(userId) {
+            const users = getStoredData('users', []);
+            const target = users.find(u => u.id === userId);
+            if (target) {
+                target.isSuspended = false;
+                target.suspendMode = 'none';
+                target.warningCount = 0;
+                target.riskGrade = 'Low';
+                await saveCloudItem('users', userId, target);
+            }
+            render();
+        }
+
+        async function blockUserPermanently(userId) {
+            const users = getStoredData('users', []);
+            const target = users.find(u => u.id === userId);
+            if (target) {
+                target.isBlocked = true;
+                target.isSuspended = true;
+                target.suspendMode = 'both';
+                await saveCloudItem('users', userId, target);
+            }
+            render();
+        }
+
+        async function unblockUser(userId) {
+            const users = getStoredData('users', []);
+            const target = users.find(u => u.id === userId);
+            if (target) {
+                target.isBlocked = false;
+                target.isSuspended = false;
+                target.suspendMode = 'none';
+                await saveCloudItem('users', userId, target);
+            }
+            render();
+        }
+
+        async function manualLowerRisk(userId) {
+            const gradeChoice = prompt('Risk Grade:\n1 = Low\n2 = Moderate\n3 = High', '1');
+            if (!gradeChoice) return;
+            let newRisk = gradeChoice === '2' ? 'Moderate' : (gradeChoice === '3' ? 'High' : 'Low');
+
+            const users = getStoredData('users', []);
+            const target = users.find(u => u.id === userId);
+            if (target) {
+                target.riskGrade = newRisk;
+                await saveCloudItem('users', userId, target);
+            }
+            render();
+        }
+
+        async function recoverUserPassword(userId) {
+            const users = getStoredData('users', []);
+            const target = users.find(u => u.id === userId);
+            if (!target) return;
+            const newPass = prompt('Enter new temporary password:', 'pass123');
+            if (!newPass) return;
+            target.password = newPass;
+            await saveCloudItem('users', userId, target);
+            alert('Password reset successfully!');
             render();
         }
 
@@ -434,18 +528,49 @@
             render();
         }
 
+        async function sendWarningMail(userId) {
+            const warningBody = prompt('Enter warning message:');
+            if (!warningBody) return;
+
+            const users = getStoredData('users', []);
+            const target = users.find(u => u.id === userId);
+            if (target) {
+                target.warningCount = (target.warningCount || 0) + 1;
+                target.riskGrade = target.warningCount >= 6 ? 'High' : (target.warningCount >= 3 ? 'Moderate' : 'Low');
+                if (!target.notifications) target.notifications = [];
+                target.notifications.unshift({
+                    id: 'notif_' + Date.now(),
+                    title: `⚠️ WARNING #${target.warningCount}`,
+                    text: warningBody,
+                    time: new Date().toLocaleString(),
+                    read: false
+                });
+                await saveCloudItem('users', userId, target);
+            }
+            alert('Warning sent.');
+            render();
+        }
+
         async function postAnnouncement(e) {
             e.preventDefault();
             const title = document.getElementById('ann-title').value;
             const content = document.getElementById('ann-content').value;
+
             const newAnn = { id: 'ann_' + Date.now(), title, content, time: new Date().toLocaleString() };
             await saveCloudItem('announcements', newAnn.id, newAnn);
+
+            const users = getStoredData('users', []);
+            for (let u of users) {
+                if (!u.notifications) u.notifications = [];
+                u.notifications.unshift({ id: 'notif_' + Date.now(), title: `📢 ${title}`, text: content, time: new Date().toLocaleTimeString(), read: false });
+                await saveCloudItem('users', u.id, u);
+            }
             alert('Announcement posted!');
             render();
         }
 
         async function deleteNovel(novelId) {
-            if (!confirm('Delete novel?')) return;
+            if (!confirm('Delete this novel?')) return;
             await deleteCloudItem('novels', novelId);
             render();
         }
@@ -482,7 +607,7 @@
             };
 
             await saveCloudItem('novels', newNovel.id, newNovel);
-            alert('Novel published!');
+            alert('Novel published successfully!');
             render();
         }
 
@@ -497,7 +622,7 @@
                 if (!novel.chapters) novel.chapters = [];
                 novel.chapters.push({ id: 'ch_' + Date.now(), title, content });
                 await saveCloudItem('novels', novel.id, novel);
-                alert('Chapter published!');
+                alert('Chapter published successfully!');
                 render();
             }
         }
@@ -548,11 +673,17 @@
             const unreadCount = (currentUser.notifications || []).filter(n => !n.read).length;
 
             return `
+                ${adminImpersonator ? `
+                    <div class="bg-amber-600 text-slate-950 px-4 py-2 text-xs font-black flex justify-between items-center shadow-lg">
+                        <span>👻 GHOST MODE ACTIVE: Viewing as <b>${currentUser.name}</b></span>
+                        <button onclick="handleLogout()" class="bg-slate-950 text-white px-3 py-1 rounded text-[11px] font-bold">Exit Ghost Mode 🚪</button>
+                    </div>
+                ` : ''}
                 <nav class="bg-slate-900 border-b border-slate-800 px-6 py-4 flex justify-between items-center sticky top-0 z-50">
                     <div class="flex items-center space-x-3 cursor-pointer" onclick="navigate('${logoDestination}')">
                         <i class="fa-solid fa-book-open-reader text-indigo-500 text-2xl"></i>
                         <span class="text-xl font-bold bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">NovelVerse</span>
-                        <span class="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-400 uppercase font-semibold">${isAdmin ? currentUser.role : activeRole} mode</span>
+                        <span class="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-400 uppercase font-semibold">${isAdmin ? 'Admin Mode' : activeRole + ' mode'}</span>
                     </div>
                     <div class="flex items-center space-x-4">
                         <button onclick="navigate('mailbox')" class="relative bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg text-xs transition flex items-center space-x-1.5">
@@ -565,13 +696,8 @@
                             <span class="hidden md:inline">Settings</span>
                         </button>
                         <span class="text-sm text-slate-300 hidden md:inline">Hello, <b>${currentUser.name}</b></span>
-                        ${showSwitch ? `
-                            <button onclick="navigate('${activeRole === 'reader' ? 'author_home' : 'reader_home'}', '${activeRole === 'reader' ? 'author' : 'reader'}')" class="text-xs bg-indigo-600/30 border border-indigo-500 text-indigo-300 px-3 py-1.5 rounded-lg hover:bg-indigo-600/50 transition">
-                                <i class="fa-solid fa-rotate mr-1"></i> Switch
-                            </button>
-                        ` : ''}
-                        <button onclick="handleLogout()" class="text-xs bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30 px-3 py-1.5 rounded-lg transition">
-                            <i class="fa-solid fa-arrow-right-from-bracket mr-1"></i> Logout
+                        <button onclick="handleLogout()" class="text-xs ${adminImpersonator ? 'bg-amber-600 text-white font-bold' : 'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'} px-3 py-1.5 rounded-lg transition">
+                            <i class="fa-solid ${adminImpersonator ? 'fa-ghost' : 'fa-arrow-right-from-bracket'} mr-1"></i> ${adminImpersonator ? 'Exit Ghost' : 'Logout'}
                         </button>
                     </div>
                 </nav>
@@ -580,11 +706,11 @@
                     <div class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                         <div class="bg-slate-900 border border-slate-800 p-6 rounded-2xl w-full max-w-md relative shadow-2xl">
                             <button onclick="showUserSettingsModal = false; render();" class="absolute top-4 right-4 text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
-                            <h3 class="text-xl font-bold text-white mb-1">Account Settings</h3>
+                            <h3 class="text-xl font-bold text-white mb-1"><i class="fa-solid fa-user-gear text-indigo-400 mr-2"></i> Account Settings</h3>
                             <form onsubmit="handleUserPasswordChange(event)" class="space-y-4 mt-4">
                                 <div><label class="block text-xs text-slate-400 mb-1">Current Password</label><input type="password" id="settings-current-pass" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs"></div>
                                 <div><label class="block text-xs text-slate-400 mb-1">New Password</label><input type="password" id="settings-new-pass" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs"></div>
-                                <button type="submit" class="w-full bg-indigo-600 text-white text-xs font-bold py-2.5 rounded-lg">Save Password</button>
+                                <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold py-2.5 rounded-lg">Save Password</button>
                             </form>
                         </div>
                     </div>
@@ -603,7 +729,7 @@
                 <div class="flex-1 max-w-3xl w-full mx-auto px-6 py-8">
                     <button onclick="navigate('${backDest}')" class="text-sm text-indigo-400 hover:underline mb-6 inline-block">← Back</button>
                     <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 mb-6">
-                        <h1 class="text-2xl font-bold text-white">Mailbox & Notifications</h1>
+                        <h1 class="text-2xl font-bold text-white"><i class="fa-solid fa-inbox text-indigo-400 mr-2"></i> Mailbox & Notifications</h1>
                     </div>
 
                     ${activeNotif ? `
@@ -637,7 +763,6 @@
                         <h1 class="text-2xl font-bold text-white mb-1">NovelVerse</h1>
                         <p class="text-xs text-slate-400 mb-6">Sign in securely with your Google Account</p>
 
-                        <!-- SECURE GOOGLE SIGN IN BUTTON -->
                         <button type="button" onclick="handleGoogleLogin()" class="w-full bg-white hover:bg-slate-100 text-slate-900 font-bold py-3 px-4 rounded-xl transition flex items-center justify-center space-x-3 shadow-lg mb-6">
                             <i class="fa-brands fa-google text-red-500 text-lg"></i>
                             <span class="text-sm">Sign in with Google</span>
@@ -650,8 +775,8 @@
                         </div>
 
                         <form onsubmit="handleLogin(event)" class="space-y-3 text-left">
-                            <div><label class="block text-xs text-slate-400 mb-1">Admin User ID</label><input type="text" id="login-email" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs"></div>
-                            <div><label class="block text-xs text-slate-400 mb-1">Password</label><input type="password" id="login-password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs"></div>
+                            <div><label class="block text-xs text-slate-400 mb-1">Admin User ID</label><input type="text" id="login-email" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs" placeholder="DR LOOM"></div>
+                            <div><label class="block text-xs text-slate-400 mb-1">Password</label><input type="password" id="login-password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs" placeholder="123"></div>
                             <button type="submit" class="w-full bg-slate-800 text-slate-300 py-2 rounded-lg text-xs font-bold">Admin Login</button>
                         </form>
                     </div>
@@ -675,13 +800,13 @@
 
         function renderReaderHome() {
             const novels = getStoredData('novels', []);
-            const isAdmin = currentUser && currentUser.role === 'admin';
+            const isAdmin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'co-admin');
             const filtered = novels.filter(n => n.title.toLowerCase().includes(readerNovelSearchQuery.toLowerCase()));
 
             return `
                 ${renderNavbar()}
                 <div class="flex-1 max-w-6xl w-full mx-auto px-6 py-8">
-                    ${isAdmin ? `<button onclick="navigate('admin_home')" class="bg-indigo-600 text-white text-xs font-bold px-4 py-2 rounded-lg mb-6">← Admin Dashboard</button>` : ''}
+                    ${isAdmin ? `<button onclick="navigate('admin_home')" class="bg-indigo-600 text-white text-xs font-bold px-4 py-2 rounded-lg mb-6">← Back to Admin Dashboard</button>` : ''}
                     <div class="flex justify-between items-center mb-8">
                         <h1 class="text-3xl font-bold text-white">Explore Novels</h1>
                         <input type="text" value="${readerNovelSearchQuery}" oninput="readerNovelSearchQuery = this.value; render();" placeholder="Search..." class="bg-slate-900 border border-slate-800 rounded-xl px-4 py-2 text-sm text-white w-64">
@@ -812,30 +937,152 @@
             `;
         }
 
+        // --- FULLY RESTORED ADVANCED ADMIN DASHBOARD ---
         function renderAdminHome() {
-            const users = getStoredData('users', []).filter(u => u.role !== 'admin');
+            const users = getStoredData('users', []).filter(u => u.role !== 'admin' && u.role !== 'co-admin');
             const novels = getStoredData('novels', []);
             const reports = getStoredData('reports', []);
+            const tickets = getStoredData('recovery_tickets', []);
+
+            const filteredUsers = users.filter(u => 
+                u.name.toLowerCase().includes(adminUserSearchQuery.toLowerCase()) ||
+                u.email.toLowerCase().includes(adminUserSearchQuery.toLowerCase())
+            );
+
             return `
                 ${renderNavbar()}
                 <div class="flex-1 max-w-6xl w-full mx-auto px-6 py-8">
-                    <h1 class="text-3xl font-bold text-white mb-6">Admin Dashboard</h1>
-                    <div class="grid grid-cols-3 gap-6 mb-8">
-                        <div class="bg-slate-900 p-6 rounded-2xl border border-slate-800"><span class="text-xs text-slate-400">Users</span><h3 class="text-2xl font-bold text-white">${users.length}</h3></div>
-                        <div class="bg-slate-900 p-6 rounded-2xl border border-slate-800"><span class="text-xs text-slate-400">Novels</span><h3 class="text-2xl font-bold text-white">${novels.length}</h3></div>
-                        <div class="bg-slate-900 p-6 rounded-2xl border border-slate-800"><span class="text-xs text-slate-400">Reports</span><h3 class="text-2xl font-bold text-red-400">${reports.length}</h3></div>
+                    <div class="flex justify-between items-center mb-6">
+                        <h1 class="text-3xl font-bold text-white">Supreme Admin Dashboard</h1>
+                        <button onclick="navigate('reader_home', 'reader')" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition">
+                            👁️ View Library / Reader Mode
+                        </button>
                     </div>
-                    <div class="bg-slate-900 p-6 rounded-2xl border border-slate-800">
-                        <h2 class="text-lg font-bold text-white mb-4">User Management</h2>
-                        <div class="space-y-3">
-                            ${users.map(u => `
-                                <div class="bg-slate-950 p-4 rounded-xl flex justify-between items-center border border-slate-800">
-                                    <div><p class="text-sm font-bold text-white">${u.name}</p><p class="text-xs text-slate-400">${u.email}</p></div>
-                                    <button onclick="deleteUserCompletely('${u.id}')" class="bg-red-950 text-red-400 text-xs px-3 py-1.5 rounded">Delete</button>
-                                </div>
-                            `).join('')}
+
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                        <div class="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-lg">
+                            <span class="text-xs text-slate-400 uppercase font-semibold">Total Users</span>
+                            <h3 class="text-3xl font-bold text-white mt-1">${users.length}</h3>
+                        </div>
+                        <div class="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-lg">
+                            <span class="text-xs text-slate-400 uppercase font-semibold">Total Novels</span>
+                            <h3 class="text-3xl font-bold text-white mt-1">${novels.length}</h3>
+                        </div>
+                        <div class="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-lg">
+                            <span class="text-xs text-slate-400 uppercase font-semibold">Reports</span>
+                            <h3 class="text-3xl font-bold text-red-400 mt-1">${reports.length}</h3>
+                        </div>
+                        <div class="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-lg">
+                            <span class="text-xs text-slate-400 uppercase font-semibold">Recovery Tickets</span>
+                            <h3 class="text-3xl font-bold text-amber-400 mt-1">${tickets.filter(t => t.status === 'Open').length}</h3>
                         </div>
                     </div>
+
+                    <!-- TABS NAVIGATION -->
+                    <div class="flex space-x-2 border-b border-slate-800 mb-6 pb-2">
+                        <button onclick="adminActiveTab = 'overview'; render();" class="px-4 py-2 text-xs font-bold rounded-lg transition ${adminActiveTab === 'overview' ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 hover:text-white'}">User Management</button>
+                        <button onclick="adminActiveTab = 'reports'; render();" class="px-4 py-2 text-xs font-bold rounded-lg transition ${adminActiveTab === 'reports' ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 hover:text-white'}">Reports (${reports.length})</button>
+                        <button onclick="adminActiveTab = 'recovery'; render();" class="px-4 py-2 text-xs font-bold rounded-lg transition ${adminActiveTab === 'recovery' ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 hover:text-white'}">Recovery Desk (${tickets.length})</button>
+                        <button onclick="adminActiveTab = 'announcements'; render();" class="px-4 py-2 text-xs font-bold rounded-lg transition ${adminActiveTab === 'announcements' ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 hover:text-white'}">Post Announcement</button>
+                    </div>
+
+                    ${adminActiveTab === 'overview' ? `
+                        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+                            <div class="flex justify-between items-center mb-6">
+                                <h2 class="text-lg font-bold text-white">Registered Users</h2>
+                                <input type="text" value="${adminUserSearchQuery}" oninput="adminUserSearchQuery = this.value; render();" placeholder="Search users..." class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white w-64">
+                            </div>
+                            <div class="space-y-4">
+                                ${filteredUsers.length === 0 ? '<p class="text-slate-500 text-xs italic">No users found.</p>' : ''}
+                                ${filteredUsers.map(u => `
+                                    <div class="bg-slate-950 border border-slate-800/80 p-4 rounded-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                                        <div>
+                                            <div class="flex items-center space-x-2">
+                                                <h4 class="text-sm font-bold text-white">${u.name}</h4>
+                                                <span class="text-[10px] px-2 py-0.5 rounded ${u.riskGrade === 'High' ? 'bg-red-950 text-red-400' : (u.riskGrade === 'Moderate' ? 'bg-amber-950 text-amber-400' : 'bg-emerald-950 text-emerald-400')}">Risk: ${u.riskGrade || 'Low'}</span>
+                                                ${u.isSuspended ? `<span class="text-[10px] px-2 py-0.5 rounded bg-amber-950 text-amber-400">Suspended (${u.suspendMode})</span>` : ''}
+                                                ${u.isBlocked ? `<span class="text-[10px] px-2 py-0.5 rounded bg-red-950 text-red-400 font-bold">BLOCKED</span>` : ''}
+                                            </div>
+                                            <p class="text-xs text-slate-400 mt-0.5">${u.email}</p>
+                                        </div>
+                                        <div class="flex flex-wrap items-center gap-2">
+                                            <button onclick="stealthInspectUser('${u.id}')" class="bg-purple-950/40 hover:bg-purple-900/50 text-purple-300 border border-purple-800/50 text-[11px] px-3 py-1.5 rounded-lg font-semibold transition">👻 Ghost Inspect</button>
+                                            <button onclick="sendDirectPersonalMail('${u.id}')" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] px-3 py-1.5 rounded-lg transition">📨 Mail</button>
+                                            <button onclick="sendWarningMail('${u.id}')" class="bg-amber-950/40 hover:bg-amber-900/50 text-amber-300 border border-amber-800/50 text-[11px] px-3 py-1.5 rounded-lg transition">⚠️ Warn</button>
+                                            ${u.isSuspended ? `
+                                                <button onclick="unsuspendUser('${u.id}')" class="bg-emerald-950/40 text-emerald-400 border border-emerald-500/30 text-[11px] px-3 py-1.5 rounded-lg">Unsuspend</button>
+                                            ` : `
+                                                <button onclick="manualSuspendUser('${u.id}')" class="bg-amber-950/40 text-amber-400 border border-amber-500/30 text-[11px] px-3 py-1.5 rounded-lg">Suspend</button>
+                                            `}
+                                            ${u.isBlocked ? `
+                                                <button onclick="unblockUser('${u.id}')" class="bg-emerald-950/40 text-emerald-400 border border-emerald-500/30 text-[11px] px-3 py-1.5 rounded-lg">Unblock</button>
+                                            ` : `
+                                                <button onclick="blockUserPermanently('${u.id}')" class="bg-red-950/40 text-red-400 border border-red-500/30 text-[11px] px-3 py-1.5 rounded-lg">Block</button>
+                                            `}
+                                            <button onclick="deleteUserCompletely('${u.id}')" class="bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 text-[11px] px-3 py-1.5 rounded-lg transition">🗑️ Delete</button>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    ${adminActiveTab === 'reports' ? `
+                        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+                            <h2 class="text-lg font-bold text-white mb-4">Reported Content</h2>
+                            <div class="space-y-3">
+                                ${reports.length === 0 ? '<p class="text-slate-500 text-xs italic">No reports submitted.</p>' : ''}
+                                ${reports.map(r => `
+                                    <div class="bg-slate-950 border border-slate-800 p-4 rounded-xl flex justify-between items-center">
+                                        <div>
+                                            <span class="text-[10px] text-red-400 uppercase font-bold">${r.targetType} Report by ${r.reporterName}</span>
+                                            <h4 class="text-sm font-bold text-white mt-0.5">${r.targetName}</h4>
+                                            <p class="text-xs text-slate-300 mt-1">Reason: ${r.reason}</p>
+                                            <span class="text-[10px] text-slate-500 mt-1 block">${r.time}</span>
+                                        </div>
+                                        <div class="flex items-center space-x-2">
+                                            ${r.authorId ? `<button onclick="sendWarningMail('${r.authorId}')" class="bg-amber-950 text-amber-400 text-xs px-3 py-1.5 rounded">Warn Author</button>` : ''}
+                                            <button onclick="deleteReport('${r.id}')" class="bg-red-950 text-red-400 text-xs px-3 py-1.5 rounded">Dismiss</button>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    ${adminActiveTab === 'recovery' ? `
+                        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+                            <h2 class="text-lg font-bold text-white mb-4">Account Recovery Desk</h2>
+                            <div class="space-y-3">
+                                ${tickets.length === 0 ? '<p class="text-slate-500 text-xs italic">No active recovery tickets.</p>' : ''}
+                                ${tickets.map(t => `
+                                    <div class="bg-slate-950 border border-slate-800 p-4 rounded-xl flex justify-between items-center">
+                                        <div>
+                                            <span class="text-[10px] text-amber-400 font-bold uppercase">Status: ${t.status}</span>
+                                            <h4 class="text-sm font-bold text-white mt-0.5">${t.email}</h4>
+                                            <p class="text-xs text-slate-300 mt-1">Proof: ${t.proof}</p>
+                                        </div>
+                                        <div class="flex items-center space-x-2">
+                                            <button onclick="activeRecoveryTicketId = '${t.id}'; render();" class="bg-indigo-600 text-white text-xs px-3 py-1.5 rounded">Chat / Review</button>
+                                            <button onclick="resolveRecoveryTicket('${t.id}')" class="bg-emerald-950 text-emerald-400 text-xs px-3 py-1.5 rounded">Issue Pass</button>
+                                            <button onclick="markTicketFinished('${t.id}')" class="bg-slate-800 text-slate-300 text-xs px-3 py-1.5 rounded">Close</button>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    ${adminActiveTab === 'announcements' ? `
+                        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl max-w-xl">
+                            <h2 class="text-lg font-bold text-white mb-4">Post Platform Announcement</h2>
+                            <form onsubmit="postAnnouncement(event)" class="space-y-4">
+                                <div><label class="block text-xs text-slate-400 mb-1">Title</label><input type="text" id="ann-title" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs"></div>
+                                <div><label class="block text-xs text-slate-400 mb-1">Content</label><textarea id="ann-content" rows="4" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs"></textarea></div>
+                                <button type="submit" class="bg-indigo-600 text-white text-xs font-bold px-4 py-2.5 rounded-lg">Broadcast to All Users</button>
+                            </form>
+                        </div>
+                    ` : ''}
                 </div>
             `;
         }
