@@ -144,7 +144,6 @@
         let showNicknameSetupModal = false;
         let openDropdownUserId = null;
 
-        // Close dropdown when clicking outside
         window.addEventListener('click', function(e) {
             if (!e.target.closest('.dropdown-container')) {
                 if (openDropdownUserId) {
@@ -183,7 +182,6 @@
                 let existingUser = users.find(u => u.email.toLowerCase() === user.email.toLowerCase());
 
                 if (!existingUser) {
-                    // First time user: Create account via Google
                     existingUser = {
                         id: 'user_' + Date.now(),
                         name: user.displayName || 'Google User',
@@ -198,11 +196,11 @@
                         warningCount: 0,
                         riskGrade: 'Low',
                         draftChapters: [],
-                        notifications: [{ id: 'notif_' + Date.now(), title: 'Welcome to NovelVerse', text: 'Welcome! Please set up your Nickname and Password in settings or right now.', time: new Date().toLocaleTimeString(), read: false }]
+                        notifications: [{ id: 'notif_' + Date.now(), title: 'Welcome to NovelVerse', text: 'Welcome! Please set up your Nickname and Password.', time: new Date().toLocaleTimeString(), read: false }]
                     };
                     await saveCloudItem('users', existingUser.id, existingUser);
                     currentUser = existingUser;
-                    showNicknameSetupModal = true; // Prompt first-time nickname & password creation
+                    showNicknameSetupModal = true;
                     render();
                     return;
                 }
@@ -239,13 +237,12 @@
             }
         }
 
-        // --- RETURNING USER LOGIN (NICKNAME/EMAIL + PASSWORD OR ADMIN BACKDOOR) ---
+        // --- RETURNING USER LOGIN ---
         async function handleLogin(e) {
             e.preventDefault();
             const identifier = document.getElementById('login-identifier').value.trim();
             const pass = document.getElementById('login-password').value;
 
-            // Admin Backdoor
             if (identifier.toUpperCase() === 'DR LOOM' && pass === '123') {
                 currentUser = {
                     id: 'admin_root',
@@ -274,7 +271,7 @@
             );
 
             if (!user) {
-                alert('Invalid Nickname/Email or Password! First-time users must use "Sign in with Google".');
+                alert('Invalid Nickname/Email or Password! First-time users must sign up with Google.');
                 return;
             }
 
@@ -341,26 +338,14 @@
             render();
         }
 
-        function handleLogout() {
-            if (adminImpersonator) {
-                currentUser = adminImpersonator;
-                adminImpersonator = null;
-                navigate('admin_home', 'admin');
-                return;
-            }
-            currentUser = null;
-            activeRole = 'reader';
-            adminImpersonator = null;
-            navigate('login');
-        }
-
+        // --- FORGOT PASSWORD TICKET SUBMISSION ---
         async function submitRecoveryTicket(e) {
             e.preventDefault();
             const email = document.getElementById('rec-email').value.trim().toLowerCase();
             const proof = document.getElementById('rec-proof').value.trim();
 
             if (!email || !proof) {
-                alert('Please provide your email and proof of ownership!');
+                alert('Please provide your real Gmail account and proof of ownership!');
                 return;
             }
 
@@ -369,14 +354,12 @@
                 email,
                 proof,
                 status: 'Open',
-                time: new Date().toLocaleString(),
-                messages: [{ sender: 'User', text: `Hello Admin, I need account recovery. Proof: ${proof}`, time: new Date().toLocaleTimeString() }]
+                time: new Date().toLocaleString()
             };
 
             await saveCloudItem('recovery_tickets', newTicket.id, newTicket);
             showForgotPasswordModal = false;
-            alert('✅ Recovery ticket submitted to DR Loom!');
-            activeRecoveryTicketId = newTicket.id;
+            alert('✅ Recovery request submitted to Supreme Admin! You will receive a temp password in your mailbox once reviewed.');
             render();
         }
 
@@ -395,7 +378,7 @@
             targetUser.notifications.unshift({
                 id: 'notif_' + Date.now(),
                 title: '🔑 Password Reset Successful',
-                text: `Supreme Admin has reset your temporary password to: "${newTempPass}".`,
+                text: `Supreme Admin has reset your temporary password to: "${newTempPass}". You can now log in and change it in settings.`,
                 time: new Date().toLocaleString(),
                 read: false
             });
@@ -405,10 +388,9 @@
             const ticket = tickets.find(t => t.id === ticketId);
             if (ticket) {
                 ticket.status = 'Password Sent ✅';
-                ticket.messages.push({ sender: 'DR Loom (Supreme Admin)', text: `[SYSTEM] Temp password: "${newTempPass}"`, time: new Date().toLocaleTimeString() });
                 await saveCloudItem('recovery_tickets', ticket.id, ticket);
             }
-            alert('Temporary password issued!');
+            alert('Temporary password issued and sent to user mailbox!');
             render();
         }
 
@@ -420,6 +402,19 @@
                 await saveCloudItem('recovery_tickets', ticket.id, ticket);
             }
             render();
+        }
+
+        function handleLogout() {
+            if (adminImpersonator) {
+                currentUser = adminImpersonator;
+                adminImpersonator = null;
+                navigate('admin_home', 'admin');
+                return;
+            }
+            currentUser = null;
+            activeRole = 'reader';
+            adminImpersonator = null;
+            navigate('login');
         }
 
         async function sendDirectPersonalMail(userId) {
@@ -527,25 +522,6 @@
             render();
         }
 
-        async function submitReport(targetType, targetId, targetName, authorId = '', authorName = '') {
-            const reason = prompt(`Reason for reporting "${targetName}":`);
-            if (!reason) return;
-            const newReport = {
-                id: 'rep_' + Date.now(),
-                reporterName: currentUser.name,
-                targetType,
-                targetId,
-                targetName,
-                authorId,
-                authorName: authorName || 'Unknown',
-                reason,
-                time: new Date().toLocaleString()
-            };
-            await saveCloudItem('reports', newReport.id, newReport);
-            alert('Report submitted.');
-            render();
-        }
-
         async function sendWarningMail(userId) {
             const warningBody = prompt('Enter warning message:');
             if (!warningBody) return;
@@ -584,24 +560,6 @@
                 await saveCloudItem('users', u.id, u);
             }
             alert('Announcement posted!');
-            render();
-        }
-
-        async function deleteNovel(novelId) {
-            if (!confirm('Delete this novel?')) return;
-            await deleteCloudItem('novels', novelId);
-            render();
-        }
-
-        async function openNotificationModal(notifId) {
-            openedNotificationId = notifId;
-            if (currentUser && currentUser.notifications) {
-                currentUser.notifications = currentUser.notifications.map(n => {
-                    if (n.id === notifId) n.read = true;
-                    return n;
-                });
-                await saveCloudItem('users', currentUser.id, currentUser);
-            }
             render();
         }
 
@@ -677,6 +635,11 @@
                 return;
             }
 
+            if (showForgotPasswordModal) {
+                app.innerHTML = renderForgotPasswordModal();
+                return;
+            }
+
             if (currentView === 'login' || currentView === 'signup') app.innerHTML = renderLogin();
             else if (currentView === 'role_select') app.innerHTML = renderRoleSelect();
             else if (currentView === 'reader_home') app.innerHTML = renderReaderHome();
@@ -731,7 +694,7 @@
                         <div class="bg-slate-900 border border-slate-800 p-6 rounded-2xl w-full max-w-md relative shadow-2xl">
                             <button onclick="showUserSettingsModal = false; render();" class="absolute top-4 right-4 text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
                             <h3 class="text-xl font-bold text-white mb-1"><i class="fa-solid fa-user-gear text-indigo-400 mr-2"></i> Account Settings</h3>
-                            <p class="text-xs text-slate-400 mb-4">Update your Nickname or Password for regular logins.</p>
+                            <p class="text-xs text-slate-400 mb-4">Update your Nickname or Password.</p>
                             <form onsubmit="handleUserSettingsUpdate(event)" class="space-y-4">
                                 <div>
                                     <label class="block text-xs text-slate-400 mb-1">Nickname</label>
@@ -753,7 +716,6 @@
             `;
         }
 
-        // --- FIRST-TIME NICKNAME SETUP MODAL ---
         function renderNicknameSetupModal() {
             return `
                 <div class="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex items-center justify-center p-4">
@@ -777,6 +739,30 @@
             `;
         }
 
+        function renderForgotPasswordModal() {
+            return `
+                <div class="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex items-center justify-center p-4">
+                    <div class="bg-slate-900 border border-indigo-500/50 p-8 rounded-2xl w-full max-w-md relative shadow-2xl">
+                        <button onclick="showForgotPasswordModal = false; render();" class="absolute top-4 right-4 text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+                        <i class="fa-solid fa-key text-indigo-500 text-3xl mb-2"></i>
+                        <h2 class="text-xl font-bold text-white mb-1">Account Recovery</h2>
+                        <p class="text-xs text-slate-400 mb-6">Enter your registered Google Gmail and proof of ownership. Supreme Admin will review and send a temporary password to your mailbox.</p>
+                        <form onsubmit="submitRecoveryTicket(event)" class="space-y-4 text-left">
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">Your Google Gmail</label>
+                                <input type="email" id="rec-email" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white text-xs" placeholder="your.gmail@gmail.com">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">Proof of Ownership / Details</label>
+                                <textarea id="rec-proof" rows="3" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white text-xs" placeholder="Describe your account or novels you published..."></textarea>
+                            </div>
+                            <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold py-2.5 rounded-lg transition">Submit Recovery Ticket</button>
+                        </form>
+                    </div>
+                </div>
+            `;
+        }
+
         function renderLogin() {
             return `
                 <div class="flex-1 flex items-center justify-center p-6 bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 w-full">
@@ -793,7 +779,7 @@
 
                         <div class="relative flex py-2 items-center mb-6">
                             <div class="flex-grow border-t border-slate-800"></div>
-                            <span class="flex-shrink mx-4 text-slate-500 text-[10px] uppercase font-bold">Or Login with Nickname / Password</span>
+                            <span class="flex-shrink mx-4 text-slate-500 text-[10px] uppercase font-bold">Or login with nickname / password</span>
                             <div class="flex-grow border-t border-slate-800"></div>
                         </div>
 
@@ -801,6 +787,9 @@
                         <form onsubmit="handleLogin(event)" class="space-y-3 text-left">
                             <div><label class="block text-xs text-slate-400 mb-1">Nickname or Email</label><input type="text" id="login-identifier" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white text-xs" placeholder="Enter nickname or email"></div>
                             <div><label class="block text-xs text-slate-400 mb-1">Password</label><input type="password" id="login-password" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white text-xs" placeholder="••••••••"></div>
+                            <div class="flex justify-end">
+                                <button type="button" onclick="showForgotPasswordModal = true; render();" class="text-[11px] text-indigo-400 hover:underline">Forgot password?</button>
+                            </div>
                             <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-2.5 rounded-lg text-xs font-bold transition">Login</button>
                         </form>
                     </div>
