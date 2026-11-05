@@ -27,7 +27,7 @@
         </div>
     </div>
 
-    <!-- JavaScript Application Logic with Firebase Cloud Sync & Google Auth -->
+    <!-- JavaScript Application Logic -->
     <script>
         // --- 1. FIREBASE CONFIGURATION ---
         const firebaseConfig = {
@@ -160,7 +160,7 @@
             render();
         }
 
-        // --- REAL GOOGLE AUTH LOGIN HANDLER ---
+        // --- GOOGLE AUTH LOGIN HANDLER ---
         async function handleGoogleLogin() {
             const provider = new firebase.auth.GoogleAuthProvider();
             try {
@@ -215,7 +215,7 @@
             }
         }
 
-        // --- PRESERVED BACKDOOR FOR SUPREME ADMIN ("DR LOOM") ---
+        // --- SUPREME ADMIN BACKDOOR ("DR LOOM" / "123") ---
         async function handleLogin(e) {
             e.preventDefault();
             const email = document.getElementById('login-email').value.trim();
@@ -316,23 +316,6 @@
             showForgotPasswordModal = false;
             alert('✅ Recovery ticket submitted to DR Loom!');
             activeRecoveryTicketId = newTicket.id;
-            render();
-        }
-
-        async function sendRecoveryChatMessage(e) {
-            e.preventDefault();
-            const input = document.getElementById('ticket-chat-input');
-            const text = input.value.trim();
-            if (!text) return;
-
-            const senderName = (currentUser && currentUser.role === 'admin') ? 'DR Loom (Supreme Admin)' : 'User';
-            const tickets = getStoredData('recovery_tickets', []);
-            const ticket = tickets.find(t => t.id === activeRecoveryTicketId);
-            if (ticket) {
-                ticket.messages.push({ sender: senderName, text, time: new Date().toLocaleTimeString() });
-                await saveCloudItem('recovery_tickets', ticket.id, ticket);
-            }
-            input.value = '';
             render();
         }
 
@@ -494,18 +477,6 @@
                 target.riskGrade = newRisk;
                 await saveCloudItem('users', userId, target);
             }
-            render();
-        }
-
-        async function recoverUserPassword(userId) {
-            const users = getStoredData('users', []);
-            const target = users.find(u => u.id === userId);
-            if (!target) return;
-            const newPass = prompt('Enter new temporary password:', 'pass123');
-            if (!newPass) return;
-            target.password = newPass;
-            await saveCloudItem('users', userId, target);
-            alert('Password reset successfully!');
             render();
         }
 
@@ -1012,7 +983,7 @@
                                             ${u.isSuspended ? `
                                                 <button onclick="unsuspendUser('${u.id}')" class="bg-emerald-950/40 text-emerald-400 border border-emerald-500/30 text-[11px] px-3 py-1.5 rounded-lg">Unsuspend</button>
                                             ` : `
-                                                <button onclick="manualSuspendUser('${u.id}')" class="bg-amber-950/40 text-amber-400 border border-amber-500/30 text-[11px] px-3 py-1.5 rounded-lg">Suspend</button>
+                                                <button onclick="manualSuspendUser('${u.id}')" class="bg-amber-950/40 text-amber-400 border border-emerald-500/30 text-[11px] px-3 py-1.5 rounded-lg">Suspend</button>
                                             `}
                                             ${u.isBlocked ? `
                                                 <button onclick="unblockUser('${u.id}')" class="bg-emerald-950/40 text-emerald-400 border border-emerald-500/30 text-[11px] px-3 py-1.5 rounded-lg">Unblock</button>
@@ -1063,7 +1034,6 @@
                                             <p class="text-xs text-slate-300 mt-1">Proof: ${t.proof}</p>
                                         </div>
                                         <div class="flex items-center space-x-2">
-                                            <button onclick="activeRecoveryTicketId = '${t.id}'; render();" class="bg-indigo-600 text-white text-xs px-3 py-1.5 rounded">Chat / Review</button>
                                             <button onclick="resolveRecoveryTicket('${t.id}')" class="bg-emerald-950 text-emerald-400 text-xs px-3 py-1.5 rounded">Issue Pass</button>
                                             <button onclick="markTicketFinished('${t.id}')" class="bg-slate-800 text-slate-300 text-xs px-3 py-1.5 rounded">Close</button>
                                         </div>
