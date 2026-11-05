@@ -141,6 +141,7 @@
         let showForgotPasswordModal = false;
         let activeRecoveryTicketId = null;
         let showUserSettingsModal = false;
+        let showNicknameSetupModal = false;
         let openDropdownUserId = null;
 
         // Close dropdown when clicking outside
@@ -171,7 +172,7 @@
             render();
         }
 
-        // --- GOOGLE AUTH LOGIN HANDLER ---
+        // --- FIRST-TIME GOOGLE SIGN UP & LOGIN ---
         async function handleGoogleLogin() {
             const provider = new firebase.auth.GoogleAuthProvider();
             try {
@@ -182,9 +183,11 @@
                 let existingUser = users.find(u => u.email.toLowerCase() === user.email.toLowerCase());
 
                 if (!existingUser) {
+                    // First time user: Create account via Google
                     existingUser = {
                         id: 'user_' + Date.now(),
                         name: user.displayName || 'Google User',
+                        nickname: '',
                         email: user.email.toLowerCase(),
                         password: '',
                         role: 'user',
@@ -195,9 +198,13 @@
                         warningCount: 0,
                         riskGrade: 'Low',
                         draftChapters: [],
-                        notifications: [{ id: 'notif_' + Date.now(), title: 'Welcome to NovelVerse', text: 'Welcome to NovelVerse! Your account has been successfully authenticated via Google.', time: new Date().toLocaleTimeString(), read: false }]
+                        notifications: [{ id: 'notif_' + Date.now(), title: 'Welcome to NovelVerse', text: 'Welcome! Please set up your Nickname and Password in settings or right now.', time: new Date().toLocaleTimeString(), read: false }]
                     };
                     await saveCloudItem('users', existingUser.id, existingUser);
+                    currentUser = existingUser;
+                    showNicknameSetupModal = true; // Prompt first-time nickname & password creation
+                    render();
+                    return;
                 }
 
                 if (existingUser.isBlocked) {
@@ -213,6 +220,12 @@
                 currentUser = existingUser;
                 adminImpersonator = null;
 
+                if (!currentUser.nickname) {
+                    showNicknameSetupModal = true;
+                    render();
+                    return;
+                }
+
                 if (currentUser.role === 'admin' || currentUser.role === 'co-admin') {
                     navigate('admin_home', 'admin');
                 } else if (currentUser.isAuthor && currentUser.suspendMode !== 'author' && currentUser.suspendMode !== 'both') {
@@ -226,17 +239,20 @@
             }
         }
 
-        // --- SUPREME ADMIN BACKDOOR ("DR LOOM" / "123") ---
+        // --- RETURNING USER LOGIN (NICKNAME/EMAIL + PASSWORD OR ADMIN BACKDOOR) ---
         async function handleLogin(e) {
             e.preventDefault();
-            const email = document.getElementById('login-email').value.trim();
+            const identifier = document.getElementById('login-identifier').value.trim();
             const pass = document.getElementById('login-password').value;
 
-            if (email.toUpperCase() === 'DR LOOM' && pass === '123') {
+            // Admin Backdoor
+            if (identifier.toUpperCase() === 'DR LOOM' && pass === '123') {
                 currentUser = {
                     id: 'admin_root',
                     email: 'drloom@admin.com',
-                    name: 'Dr. Loom (Supreme Admin)',
+                    password: '123',
+                    name: 'Dr. Loom',
+                    nickname: 'DR LOOM',
                     role: 'admin',
                     isAuthor: true,
                     isSuspended: false,
@@ -252,9 +268,13 @@
             }
 
             const users = getStoredData('users', []);
-            const user = users.find(u => u.email.toLowerCase() === email.toLowerCase() && u.password === pass);
+            const user = users.find(u => 
+                (u.email.toLowerCase() === identifier.toLowerCase() || (u.nickname && u.nickname.toLowerCase() === identifier.toLowerCase())) && 
+                u.password === pass
+            );
+
             if (!user) {
-                alert('Invalid email or password! Regular users should use "Sign in with Google".');
+                alert('Invalid Nickname/Email or Password! First-time users must use "Sign in with Google".');
                 return;
             }
 
@@ -274,6 +294,53 @@
             }
         }
 
+        // --- FIRST-TIME NICKNAME & PASSWORD SETUP HANDLER ---
+        async function handleInitialNicknameSetup(e) {
+            e.preventDefault();
+            const nickname = document.getElementById('setup-nickname').value.trim();
+            const password = document.getElementById('setup-password').value;
+
+            if (!nickname || !password) {
+                alert('Please enter both a nickname and password.');
+                return;
+            }
+
+            currentUser.nickname = nickname;
+            currentUser.password = password;
+            await saveCloudItem('users', currentUser.id, currentUser);
+            showNicknameSetupModal = false;
+            alert('✅ Nickname and Password successfully saved to Firebase!');
+
+            if (currentUser.role === 'admin' || currentUser.role === 'co-admin') {
+                navigate('admin_home', 'admin');
+            } else if (currentUser.isAuthor) {
+                navigate('role_select');
+            } else {
+                navigate('reader_home', 'reader');
+            }
+        }
+
+        // --- USER SETTINGS UPDATE (NICKNAME & PASSWORD) ---
+        async function handleUserSettingsUpdate(e) {
+            e.preventDefault();
+            const newNickname = document.getElementById('settings-nickname').value.trim();
+            const currentPass = document.getElementById('settings-current-pass').value;
+            const newPass = document.getElementById('settings-new-pass').value;
+
+            if (currentUser.password && currentUser.password !== currentPass && currentUser.role !== 'admin') {
+                alert('Current password is incorrect!');
+                return;
+            }
+
+            if (newNickname) currentUser.nickname = newNickname;
+            if (newPass) currentUser.password = newPass;
+
+            await saveCloudItem('users', currentUser.id, currentUser);
+            showUserSettingsModal = false;
+            alert('✅ Account settings successfully updated in Firebase!');
+            render();
+        }
+
         function handleLogout() {
             if (adminImpersonator) {
                 currentUser = adminImpersonator;
@@ -285,23 +352,6 @@
             activeRole = 'reader';
             adminImpersonator = null;
             navigate('login');
-        }
-
-        async function handleUserPasswordChange(e) {
-            e.preventDefault();
-            const currentPass = document.getElementById('settings-current-pass').value;
-            const newPass = document.getElementById('settings-new-pass').value;
-
-            if (currentUser.password && currentUser.password !== currentPass && currentUser.role !== 'admin') {
-                alert('Current password is incorrect!');
-                return;
-            }
-
-            currentUser.password = newPass;
-            await saveCloudItem('users', currentUser.id, currentUser);
-            showUserSettingsModal = false;
-            alert('✅ Password successfully updated!');
-            render();
         }
 
         async function submitRecoveryTicket(e) {
@@ -566,7 +616,7 @@
                 id: 'novel_' + Date.now(),
                 title,
                 authorId: currentUser.id,
-                authorName: currentUser.name,
+                authorName: currentUser.nickname || currentUser.name,
                 cover,
                 genre,
                 synopsis,
@@ -605,7 +655,7 @@
                 id: 'com_' + Date.now(),
                 chapterId: selectedChapterId,
                 userId: currentUser.id,
-                userName: currentUser.name,
+                userName: currentUser.nickname || currentUser.name,
                 text,
                 time: new Date().toLocaleTimeString(),
                 reply: ''
@@ -621,6 +671,11 @@
             const app = document.getElementById('app');
             app.className = "flex-1 flex flex-col";
             app.innerHTML = '';
+
+            if (showNicknameSetupModal) {
+                app.innerHTML = renderNicknameSetupModal();
+                return;
+            }
 
             if (currentView === 'login' || currentView === 'signup') app.innerHTML = renderLogin();
             else if (currentView === 'role_select') app.innerHTML = renderRoleSelect();
@@ -643,7 +698,7 @@
             return `
                 ${adminImpersonator ? `
                     <div class="bg-amber-600 text-slate-950 px-4 py-2 text-xs font-black flex justify-between items-center shadow-lg">
-                        <span>👻 GHOST MODE ACTIVE: Viewing as <b>${currentUser.name}</b></span>
+                        <span>👻 GHOST MODE ACTIVE: Viewing as <b>${currentUser.nickname || currentUser.name}</b></span>
                         <button onclick="handleLogout()" class="bg-slate-950 text-white px-3 py-1 rounded text-[11px] font-bold">Exit Ghost Mode 🚪</button>
                     </div>
                 ` : ''}
@@ -663,22 +718,34 @@
                             <i class="fa-solid fa-gear text-slate-400"></i>
                             <span class="hidden md:inline">Settings</span>
                         </button>
-                        <span class="text-sm text-slate-300 hidden md:inline">Hello, <b>${currentUser.name}</b></span>
+                        <span class="text-sm text-slate-300 hidden md:inline">Hello, <b>${currentUser.nickname || currentUser.name}</b></span>
                         <button onclick="handleLogout()" class="text-xs ${adminImpersonator ? 'bg-amber-600 text-white font-bold' : 'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'} px-3 py-1.5 rounded-lg transition">
                             <i class="fa-solid ${adminImpersonator ? 'fa-ghost' : 'fa-arrow-right-from-bracket'} mr-1"></i> ${adminImpersonator ? 'Exit Ghost' : 'Logout'}
                         </button>
                     </div>
                 </nav>
 
+                <!-- USER SETTINGS MODAL (CHANGE NICKNAME & PASSWORD) -->
                 ${showUserSettingsModal ? `
                     <div class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                         <div class="bg-slate-900 border border-slate-800 p-6 rounded-2xl w-full max-w-md relative shadow-2xl">
                             <button onclick="showUserSettingsModal = false; render();" class="absolute top-4 right-4 text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
                             <h3 class="text-xl font-bold text-white mb-1"><i class="fa-solid fa-user-gear text-indigo-400 mr-2"></i> Account Settings</h3>
-                            <form onsubmit="handleUserPasswordChange(event)" class="space-y-4 mt-4">
-                                <div><label class="block text-xs text-slate-400 mb-1">Current Password</label><input type="password" id="settings-current-pass" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs"></div>
-                                <div><label class="block text-xs text-slate-400 mb-1">New Password</label><input type="password" id="settings-new-pass" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs"></div>
-                                <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold py-2.5 rounded-lg">Save Password</button>
+                            <p class="text-xs text-slate-400 mb-4">Update your Nickname or Password for regular logins.</p>
+                            <form onsubmit="handleUserSettingsUpdate(event)" class="space-y-4">
+                                <div>
+                                    <label class="block text-xs text-slate-400 mb-1">Nickname</label>
+                                    <input type="text" id="settings-nickname" value="${currentUser.nickname || ''}" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-slate-400 mb-1">Current Password</label>
+                                    <input type="password" id="settings-current-pass" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs" placeholder="Required if changing password">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-slate-400 mb-1">New Password</label>
+                                    <input type="password" id="settings-new-pass" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs" placeholder="Leave blank to keep current">
+                                </div>
+                                <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold py-2.5 rounded-lg">Save Changes to Firebase</button>
                             </form>
                         </div>
                     </div>
@@ -686,38 +753,25 @@
             `;
         }
 
-        function renderMailbox() {
-            const notifs = currentUser.notifications || [];
-            const isAdmin = currentUser.role === 'admin' || currentUser.role === 'co-admin';
-            const backDest = isAdmin ? 'admin_home' : 'reader_home';
-            const activeNotif = notifs.find(n => n.id === openedNotificationId);
-
+        // --- FIRST-TIME NICKNAME SETUP MODAL ---
+        function renderNicknameSetupModal() {
             return `
-                ${renderNavbar()}
-                <div class="flex-1 max-w-3xl w-full mx-auto px-6 py-8">
-                    <button onclick="navigate('${backDest}')" class="text-sm text-indigo-400 hover:underline mb-6 inline-block">← Back</button>
-                    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 mb-6">
-                        <h1 class="text-2xl font-bold text-white"><i class="fa-solid fa-inbox text-indigo-400 mr-2"></i> Mailbox & Notifications</h1>
-                    </div>
-
-                    ${activeNotif ? `
-                        <div class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                            <div class="bg-slate-900 border border-indigo-500/50 p-6 rounded-2xl w-full max-w-lg relative shadow-2xl">
-                                <button onclick="openedNotificationId = null; render();" class="absolute top-4 right-4 text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
-                                <h3 class="text-xl font-bold text-white mb-4">${activeNotif.title}</h3>
-                                <div class="bg-slate-950 p-4 rounded-xl text-slate-200 text-sm whitespace-pre-line mb-4">${activeNotif.text}</div>
-                                <button onclick="openedNotificationId = null; render();" class="bg-indigo-600 text-white text-xs px-4 py-2 rounded-lg">Close</button>
+                <div class="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex items-center justify-center p-4">
+                    <div class="bg-slate-900 border border-indigo-500/50 p-8 rounded-2xl w-full max-w-md relative shadow-2xl text-center">
+                        <i class="fa-solid fa-id-card text-indigo-500 text-4xl mb-3"></i>
+                        <h2 class="text-2xl font-bold text-white mb-1">Complete Your Profile</h2>
+                        <p class="text-xs text-slate-400 mb-6">Since this is your first time signing in with Google, please create your unique Nickname and Password. You can use them to log in anytime!</p>
+                        <form onsubmit="handleInitialNicknameSetup(event)" class="space-y-4 text-left">
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">Your Nickname</label>
+                                <input type="text" id="setup-nickname" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-white text-xs" placeholder="e.g. ShadowWriter">
                             </div>
-                        </div>
-                    ` : ''}
-
-                    <div class="space-y-3">
-                        ${notifs.map(n => `
-                            <div onclick="openNotificationModal('${n.id}')" class="bg-slate-900 border ${n.read ? 'border-slate-800' : 'border-indigo-500'} p-4 rounded-xl cursor-pointer">
-                                <h4 class="text-sm font-bold text-white">${n.title}</h4>
-                                <p class="text-xs text-slate-300 mt-1 line-clamp-1">${n.text}</p>
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">Create Password</label>
+                                <input type="password" id="setup-password" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-white text-xs" placeholder="••••••••">
                             </div>
-                        `).join('')}
+                            <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold py-3 rounded-xl shadow-lg transition">Save & Enter Dashboard</button>
+                        </form>
                     </div>
                 </div>
             `;
@@ -729,23 +783,25 @@
                     <div class="bg-slate-900 border border-slate-800 p-8 rounded-2xl w-full max-w-md shadow-2xl text-center">
                         <i class="fa-solid fa-book-sparkles text-indigo-500 text-4xl mb-2"></i>
                         <h1 class="text-2xl font-bold text-white mb-1">NovelVerse</h1>
-                        <p class="text-xs text-slate-400 mb-6">Sign in securely with your Google Account</p>
+                        <p class="text-xs text-slate-400 mb-6">First-time users must sign up with Google. Returning users can use Google or Nickname & Password.</p>
 
+                        <!-- GOOGLE SIGN UP / LOGIN -->
                         <button type="button" onclick="handleGoogleLogin()" class="w-full bg-white hover:bg-slate-100 text-slate-900 font-bold py-3 px-4 rounded-xl transition flex items-center justify-center space-x-3 shadow-lg mb-6">
                             <i class="fa-brands fa-google text-red-500 text-lg"></i>
-                            <span class="text-sm">Sign in with Google</span>
+                            <span class="text-sm">Sign in / Sign up with Google</span>
                         </button>
 
                         <div class="relative flex py-2 items-center mb-6">
                             <div class="flex-grow border-t border-slate-800"></div>
-                            <span class="flex-shrink mx-4 text-slate-500 text-[10px] uppercase font-bold">Admin Portal</span>
+                            <span class="flex-shrink mx-4 text-slate-500 text-[10px] uppercase font-bold">Or Login with Nickname / Password</span>
                             <div class="flex-grow border-t border-slate-800"></div>
                         </div>
 
+                        <!-- NICKNAME & PASSWORD LOGIN -->
                         <form onsubmit="handleLogin(event)" class="space-y-3 text-left">
-                            <div><label class="block text-xs text-slate-400 mb-1">Admin User ID</label><input type="text" id="login-email" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs" placeholder="DR LOOM"></div>
-                            <div><label class="block text-xs text-slate-400 mb-1">Password</label><input type="password" id="login-password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-xs" placeholder="123"></div>
-                            <button type="submit" class="w-full bg-slate-800 text-slate-300 py-2 rounded-lg text-xs font-bold">Admin Login</button>
+                            <div><label class="block text-xs text-slate-400 mb-1">Nickname or Email</label><input type="text" id="login-identifier" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white text-xs" placeholder="Enter nickname or email"></div>
+                            <div><label class="block text-xs text-slate-400 mb-1">Password</label><input type="password" id="login-password" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white text-xs" placeholder="••••••••"></div>
+                            <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-2.5 rounded-lg text-xs font-bold transition">Login</button>
                         </form>
                     </div>
                 </div>
@@ -756,10 +812,10 @@
             return `
                 <div class="flex-1 flex items-center justify-center p-6 bg-slate-950 w-full">
                     <div class="bg-slate-900 border border-slate-800 p-8 rounded-2xl w-full max-w-md text-center">
-                        <h1 class="text-2xl font-bold text-white mb-6">Welcome, ${currentUser.name}!</h1>
+                        <h1 class="text-2xl font-bold text-white mb-6">Welcome, ${currentUser.nickname || currentUser.name}!</h1>
                         <div class="grid grid-cols-2 gap-4">
-                            <button onclick="navigate('reader_home', 'reader')" class="p-4 bg-slate-950 border border-slate-800 rounded-xl text-white font-bold">Reader</button>
-                            <button onclick="navigate('author_home', 'author')" class="p-4 bg-slate-950 border border-slate-800 rounded-xl text-white font-bold">Author</button>
+                            <button onclick="navigate('reader_home', 'reader')" class="p-4 bg-slate-950 border border-slate-800 rounded-xl text-white font-bold hover:bg-slate-900 transition">Reader</button>
+                            <button onclick="navigate('author_home', 'author')" class="p-4 bg-slate-950 border border-slate-800 rounded-xl text-white font-bold hover:bg-slate-900 transition">Author</button>
                         </div>
                     </div>
                 </div>
@@ -905,7 +961,6 @@
             `;
         }
 
-        // --- ADMIN DASHBOARD WITH LEFT-SIDE DROPDOWN MENU ---
         function renderAdminHome() {
             const users = getStoredData('users', []).filter(u => u.role !== 'admin' && u.role !== 'co-admin');
             const novels = getStoredData('novels', []);
@@ -913,7 +968,8 @@
             const tickets = getStoredData('recovery_tickets', []);
 
             const filteredUsers = users.filter(u => 
-                u.name.toLowerCase().includes(adminUserSearchQuery.toLowerCase()) ||
+                (u.name && u.name.toLowerCase().includes(adminUserSearchQuery.toLowerCase())) ||
+                (u.nickname && u.nickname.toLowerCase().includes(adminUserSearchQuery.toLowerCase())) ||
                 u.email.toLowerCase().includes(adminUserSearchQuery.toLowerCase())
             );
 
@@ -994,10 +1050,10 @@
                                             ` : ''}
                                         </div>
 
-                                        <!-- RIGHT SIDE: EXPANDED USER DETAILS (WHERE BUTTONS USED TO BE) -->
+                                        <!-- RIGHT SIDE: USER DETAILS -->
                                         <div class="flex-1 px-4">
                                             <div class="flex items-center space-x-3 mb-1">
-                                                <h4 class="text-sm font-bold text-white">${u.name}</h4>
+                                                <h4 class="text-sm font-bold text-white">${u.nickname || u.name} <span class="text-xs text-slate-500 font-normal">(${u.name})</span></h4>
                                                 <span class="text-[10px] px-2 py-0.5 rounded ${u.riskGrade === 'High' ? 'bg-red-950 text-red-400' : (u.riskGrade === 'Moderate' ? 'bg-amber-950 text-amber-400' : 'bg-emerald-950 text-emerald-400')}">Risk: ${u.riskGrade || 'Low'}</span>
                                                 ${u.isSuspended ? `<span class="text-[10px] px-2 py-0.5 rounded bg-amber-950 text-amber-400">Suspended (${u.suspendMode})</span>` : ''}
                                                 ${u.isBlocked ? `<span class="text-[10px] px-2 py-0.5 rounded bg-red-950 text-red-400 font-bold">BLOCKED</span>` : ''}
@@ -1005,7 +1061,7 @@
                                             <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-400">
                                                 <span><i class="fa-solid fa-envelope mr-1 text-slate-500"></i> ${u.email}</span>
                                                 <span><i class="fa-solid fa-triangle-exclamation mr-1 text-amber-500"></i> Warnings: <b>${u.warningCount || 0}</b></span>
-                                                <span><i class="fa-solid fa-shield-halved mr-1 text-indigo-400"></i> Role: <b>${u.role || 'user'}</b></span>
+                                                <span><i class="fa-solid fa-key mr-1 text-indigo-400"></i> Nickname: <b>${u.nickname || 'Not Set'}</b></span>
                                             </div>
                                         </div>
 
